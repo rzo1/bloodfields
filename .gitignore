@@ -57,5 +57,12 @@ Desktop.ini
 *.swp
 *.swo
 
+# Claude Code agent state
+.claude/
+
+# Internal planning + audit notes (not for the public repo)
+PLAN.md
+AUDIT.md
+
 # Logs
 *.log
