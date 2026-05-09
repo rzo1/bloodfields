@@ -45,7 +45,7 @@ public final class Levels {
                 new Level(7, "Healer's Stand", 700, Levels::healersStand, Weather.CLEAR, "mire"),
                 new Level(8, "Shadow Cult", 800, Levels::shadowCult, Weather.NIGHT, "gauntlet"),
                 new Level(9, "Siege Towers", 900, Levels::siegeTowers, Weather.CLEAR, "fortress_wall"),
-                new Level(10, "Final Fuckery", 1200, Levels::finalFuckery, Weather.NIGHT, "fortress_wall")
+                new Level(10, "Final Fuckery", 2200, Levels::finalFuckery, Weather.NIGHT, "fortress_wall")
         );
     }
 

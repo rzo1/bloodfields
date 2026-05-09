@@ -113,6 +113,7 @@ public class GameApp extends Application {
     public void start(Stage stage) {
         canvas = new Canvas(WIDTH, HEIGHT);
         root = new BorderPane();
+        root.setStyle("-fx-background-color: linear-gradient(to bottom, #1a1f18, #0a0f08);");
 
         renderer = new Renderer();
         overlay = new DeploymentOverlayRenderer();
