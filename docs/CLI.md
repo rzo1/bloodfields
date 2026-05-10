@@ -1,18 +1,18 @@
 # Bloodfield CLI
 
-A headless, JavaFX-free entry point so external programs (LLMs, scripts, tournaments) can drive battles. Lives in `com.github.rzo1.armyclash.cli`.
+A headless, JavaFX-free entry point so external programs (LLMs, scripts, tournaments) can drive battles. Lives in `com.github.rzo1.bloodfields.cli`.
 
 ## Build and run
 
 ```bash
 mvn -DskipTests package
-java -cp target/bloodfield-0.1.0-SNAPSHOT-all.jar com.github.rzo1.armyclash.cli.CliMain help
+java -cp target/bloodfield-0.1.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain help
 ```
 
-A wrapper is provided at `bin/bloodfield-cli`:
+A wrapper is provided at `bin/bloodfields-cli`:
 
 ```bash
-bin/bloodfield-cli help
+bin/bloodfields-cli help
 ```
 
 ## Subcommands
@@ -22,7 +22,7 @@ bin/bloodfield-cli help
 Print all campaign levels as a JSON array. Each entry has `number`, `name`, `code`, `mapId`, `weather`, `playerBudget`, `playerCaps`.
 
 ```bash
-bin/bloodfield-cli levels
+bin/bloodfields-cli levels
 ```
 
 ### `level <n|code>`
@@ -30,8 +30,8 @@ bin/bloodfield-cli levels
 Print a single level's full details: terrain ASCII, enemy roster, structures, deployment zone, caps. The argument is `1..N` or a level code (e.g. `SKIRMISH`, `FUCKERY`).
 
 ```bash
-bin/bloodfield-cli level 5
-bin/bloodfield-cli level CABAL
+bin/bloodfields-cli level 5
+bin/bloodfields-cli level CABAL
 ```
 
 ### `maps`
@@ -98,7 +98,7 @@ printf '%s\n' \
   '{"op":"step","ticks":3600}' \
   '{"op":"state"}' \
   '{"op":"quit"}' \
-  | bin/bloodfield-cli play 1
+  | bin/bloodfields-cli play 1
 ```
 
 ### `sim <spec> --red=<file> [--blue=<file>] [--max-ticks=N]`
@@ -120,11 +120,11 @@ Army file format:
 For campaign specs the enemy is auto-spawned from the level's spawner; pass `--blue=` only when running against a custom roster on `map:` specs.
 
 ```bash
-bin/bloodfield-cli sim 1 --red=examples/red.json
+bin/bloodfields-cli sim 1 --red=examples/red.json
 ```
 
 ## Notes
 
-- The CLI is JavaFX-free and lives in `com.github.rzo1.armyclash.cli`. It reuses `model/`, `engine/`, and `ai/`.
+- The CLI is JavaFX-free and lives in `com.github.rzo1.bloodfields.cli`. It reuses `model/`, `engine/`, and `ai/`.
 - Deployment uses the same gating as the JavaFX `DeploymentController`: zone check, terrain passability, budget, unique cap, per-type cap.
 - World is fixed at 1280x800 with 32-pixel tiles.

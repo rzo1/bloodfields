@@ -20,15 +20,15 @@ jobs:
           - os: macos-latest
             os_label: macos
             installer_glob: 'target/installers/*.dmg'
-            cli_path: 'target/bloodfield-cli'
+            cli_path: 'target/bloodfields-cli'
           - os: windows-latest
             os_label: windows
             installer_glob: 'target/installers/*.msi'
-            cli_path: 'target/bloodfield-cli.exe'
+            cli_path: 'target/bloodfields-cli.exe'
           - os: ubuntu-latest
             os_label: linux
             installer_glob: 'target/installers/*.deb'
-            cli_path: 'target/bloodfield-cli'
+            cli_path: 'target/bloodfields-cli'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,7 +67,7 @@ jobs:
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bloodfield-cli-${{ matrix.os_label }}
+          name: bloodfields-cli-${{ matrix.os_label }}
           path: ${{ matrix.cli_path }}
           if-no-files-found: error
 
@@ -85,7 +85,7 @@ jobs:
       - name: Flatten artifact tree
         run: |
           mkdir -p release
-          find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.deb' -o -name 'bloodfield-cli' -o -name 'bloodfield-cli.exe' \) -print0 \
+          find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.deb' -o -name 'bloodfields-cli' -o -name 'bloodfields-cli.exe' \) -print0 \
             | while IFS= read -r -d '' f; do
                 base=$(basename "$f")
                 parent=$(basename "$(dirname "$f")")

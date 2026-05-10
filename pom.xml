@@ -5,10 +5,10 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.github.rzo1</groupId>
-    <artifactId>bloodfield</artifactId>
+    <artifactId>bloodfields</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
-    <name>bloodfield</name>
+    <name>bloodfields</name>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
@@ -18,12 +18,12 @@
         <gitcommitid.skip>false</gitcommitid.skip>
         <jpackage.appVersion>1.0.0</jpackage.appVersion>
         <jpackage.appName>Bloodfield</jpackage.appName>
-        <jpackage.mainJar>bloodfield-${project.version}-all.jar</jpackage.mainJar>
-        <jpackage.mainClass>com.github.rzo1.armyclash.ui.Launcher</jpackage.mainClass>
+        <jpackage.mainJar>bloodfields-${project.version}-all.jar</jpackage.mainJar>
+        <jpackage.mainClass>com.github.rzo1.bloodfields.ui.Launcher</jpackage.mainClass>
         <jpackage.input>${project.build.directory}/jpackage-input</jpackage.input>
         <jpackage.dest>${project.build.directory}/installers</jpackage.dest>
-        <graal.mainClass>com.github.rzo1.armyclash.cli.CliMain</graal.mainClass>
-        <graal.imageName>bloodfield-cli</graal.imageName>
+        <graal.mainClass>com.github.rzo1.bloodfields.cli.CliMain</graal.mainClass>
+        <graal.imageName>bloodfields-cli</graal.imageName>
         <graal.configDir>${project.basedir}/src/main/resources/META-INF/native-image</graal.configDir>
     </properties>
 
@@ -145,7 +145,7 @@
 
                 mvn -Ppackage-graal package -DskipTests
 
-            Produces target/${graal.imageName} (typically `bloodfield-cli`).
+            Produces target/${graal.imageName} (typically `bloodfields-cli`).
 
             The CLI is intentionally JavaFX-free — JavaFX + native-image is a separate,
             much harder problem (see `package-gui-native` profile below). The native-image
@@ -264,7 +264,7 @@
                                 <phase>verify</phase>
                                 <goals><goal>java</goal></goals>
                                 <configuration>
-                                    <mainClass>com.github.rzo1.armyclash.tools.ScreenshotGenerator</mainClass>
+                                    <mainClass>com.github.rzo1.bloodfields.tools.ScreenshotGenerator</mainClass>
                                     <classpathScope>runtime</classpathScope>
                                     <systemProperties>
                                         <systemProperty>
@@ -324,7 +324,7 @@
                         <artifactId>gluonfx-maven-plugin</artifactId>
                         <version>1.0.27</version>
                         <configuration>
-                            <mainClass>com.github.rzo1.armyclash.ui.Launcher</mainClass>
+                            <mainClass>com.github.rzo1.bloodfields.ui.Launcher</mainClass>
                             <nativeImageArgs>
                                 <arg>--no-fallback</arg>
                                 <arg>-H:+ReportExceptionStackTraces</arg>
@@ -419,7 +419,7 @@
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>com.github.rzo1.armyclash.ui.GameApp</mainClass>
+                    <mainClass>com.github.rzo1.bloodfields.ui.GameApp</mainClass>
                 </configuration>
             </plugin>
             <plugin>
@@ -438,7 +438,7 @@
                             <shadedClassifierName>all</shadedClassifierName>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.github.rzo1.armyclash.ui.Launcher</mainClass>
+                                    <mainClass>com.github.rzo1.bloodfields.ui.Launcher</mainClass>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>

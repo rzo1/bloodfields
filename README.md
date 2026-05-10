@@ -76,18 +76,18 @@ command reference.
 
 ```bash
 mvn -DskipTests package
-java -cp target/bloodfield-0.1.0-SNAPSHOT-all.jar com.github.rzo1.armyclash.cli.CliMain levels
-java -cp target/bloodfield-0.1.0-SNAPSHOT-all.jar com.github.rzo1.armyclash.cli.CliMain level 5
+java -cp target/bloodfield-0.1.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain levels
+java -cp target/bloodfield-0.1.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain level 5
 printf '%s\n' \
   '{"op":"place","type":"INFANTRY","x":640,"y":700}' \
   '{"op":"start"}' \
   '{"op":"step","ticks":3600}' \
   '{"op":"state"}' \
   '{"op":"quit"}' \
-  | java -cp target/bloodfield-0.1.0-SNAPSHOT-all.jar com.github.rzo1.armyclash.cli.CliMain play 1
+  | java -cp target/bloodfield-0.1.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain play 1
 ```
 
-A `bin/bloodfield-cli` wrapper is included.
+A `bin/bloodfields-cli` wrapper is included.
 
 ## Native installer
 
@@ -124,7 +124,7 @@ Notes:
 
 ## Native binary (GraalVM)
 
-The headless **CLI** (`com.github.rzo1.armyclash.cli.CliMain`) can be compiled to
+The headless **CLI** (`com.github.rzo1.bloodfields.cli.CliMain`) can be compiled to
 a standalone native binary with GraalVM `native-image`. No JVM, no JDK, no
 JavaFX — just a single executable that boots in milliseconds. Convenient for
 LLM-driven play, scripted simulations, and CI.
@@ -144,7 +144,7 @@ Build:
 mvn -Ppackage-graal package -DskipTests
 ```
 
-Output: `target/bloodfield-cli` (the binary name is set by the
+Output: `target/bloodfields-cli` (the binary name is set by the
 `graal.imageName` Maven property; override with `-Dgraal.imageName=...`).
 
 `native-image` only walks the call graph reachable from `CliMain`, so the

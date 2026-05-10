@@ -107,7 +107,7 @@ mvn -Ppackage-graal package -DskipTests
       label: 'macOS',
       icon: '🍏', // 🍏
       installer: { match: /\.dmg$/i, label: 'Installer (.dmg)', hint: 'Bundled JRE. Right-click → Open on first launch (unsigned).' },
-      cli: { match: /(^|[^.])bloodfield-cli$/i, fileMatch: /macos/i, label: 'CLI binary', hint: 'arm64. chmod +x then run.' }
+      cli: { match: /(^|[^.])bloodfields-cli$/i, fileMatch: /macos/i, label: 'CLI binary', hint: 'arm64. chmod +x then run.' }
     },
     {
       key: 'windows',
@@ -121,7 +121,7 @@ mvn -Ppackage-graal package -DskipTests
       label: 'Linux',
       icon: '🐧', // 🐧
       installer: { match: /\.deb$/i, label: 'Installer (.deb)', hint: 'Debian/Ubuntu. sudo apt install ./pkg.deb' },
-      cli: { match: /(^|[^.])bloodfield-cli$/i, fileMatch: /linux/i, label: 'CLI binary', hint: 'x86_64. chmod +x then run.' }
+      cli: { match: /(^|[^.])bloodfields-cli$/i, fileMatch: /linux/i, label: 'CLI binary', hint: 'x86_64. chmod +x then run.' }
     }
   ];
 
