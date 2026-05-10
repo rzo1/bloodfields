@@ -56,10 +56,10 @@ OSes), and the page links straight to the latest artifacts.
 mvn javafx:run                               # run from source
 # or build the fat jar:
 mvn -DskipTests package
-java -jar target/bloodfields-1.1.0-SNAPSHOT-all.jar
+java -jar target/bloodfields-1.1.0-all.jar
 ```
 
-Java 21 required. The shade plugin produces `bloodfields-1.1.0-SNAPSHOT-all.jar`
+Java 21 required. The shade plugin produces `bloodfields-1.1.0-all.jar`
 in `target/` — the artifact ID stays as-is to keep build paths stable.
 
 ### Regenerate screenshots
@@ -82,15 +82,15 @@ command reference.
 
 ```bash
 mvn -DskipTests package
-java -cp target/bloodfields-1.1.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain levels
-java -cp target/bloodfields-1.1.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain level 5
+java -cp target/bloodfields-1.1.0-all.jar com.github.rzo1.bloodfields.cli.CliMain levels
+java -cp target/bloodfields-1.1.0-all.jar com.github.rzo1.bloodfields.cli.CliMain level 5
 printf '%s\n' \
   '{"op":"place","type":"INFANTRY","x":640,"y":700}' \
   '{"op":"start"}' \
   '{"op":"step","ticks":3600}' \
   '{"op":"state"}' \
   '{"op":"quit"}' \
-  | java -cp target/bloodfields-1.1.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain play 1
+  | java -cp target/bloodfields-1.1.0-all.jar com.github.rzo1.bloodfields.cli.CliMain play 1
 ```
 
 A `bin/bloodfields-cli` wrapper is included.
@@ -124,9 +124,9 @@ Notes:
   Developer ID by adding `--mac-sign` options to the plugin config.
 - The Windows MSI is unsigned for the same reason.
 - App version is set via the `jpackage.appVersion` Maven property
-  (defaults to `1.0.0`); override with `-Djpackage.appVersion=...`.
+  (defaults to the released app version); override with `-Djpackage.appVersion=...`.
   jpackage requires the first version segment to be a positive integer,
-  which is why this is independent of the project's `1.1.0-SNAPSHOT` version.
+  which is why this is decoupled from the project's `-SNAPSHOT` versions.
 
 ## Native binary (GraalVM)
 
