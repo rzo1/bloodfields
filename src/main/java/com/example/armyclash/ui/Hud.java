@@ -112,7 +112,6 @@ public final class Hud extends BorderPane {
         autoFill.setOnAction(e -> autoFill());
 
         restoreLast.setMaxWidth(Double.MAX_VALUE);
-        restoreLast.setStyle("-fx-text-fill: #ffd76b;");
         restoreLast.setDisable(true);
         restoreLast.setOnAction(e -> {
             if (onRestoreLast != null) {
