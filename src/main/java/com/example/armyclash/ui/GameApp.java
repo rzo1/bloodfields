@@ -85,6 +85,7 @@ public class GameApp extends Application {
     private SpeedControl speed;
     private WeatherSystem weather = new WeatherSystem();
     private HelpOverlay helpOverlay = new HelpOverlay();
+    private final LastDeploymentMemory lastDeployment = new LastDeploymentMemory();
 
     private Canvas canvas;
     private BorderPane root;
@@ -476,6 +477,7 @@ public class GameApp extends Application {
 
         hud = new Hud(playerArmy, deploymentController, this::onStartBattle);
         hud.setLevelInfo(level.number(), levels.size(), level.name());
+        hud.setRestoreLast(lastDeployment, () -> restoreLastDeployment(playerArmy));
         root.setLeft(hud);
 
         initialRedCount = 0;
@@ -506,6 +508,21 @@ public class GameApp extends Application {
         driver.reset();
     }
 
+    private void restoreLastDeployment(Army army) {
+        if (army == null || !lastDeployment.hasSnapshot()) return;
+        java.util.List<Unit> existing = new java.util.ArrayList<>(army.units());
+        for (Unit u : existing) army.remove(u);
+        for (LastDeploymentMemory.Slot slot : lastDeployment.slots()) {
+            if (army.remainingBudget() < slot.type.cost()) break;
+            Unit u = new Unit(state.nextUnitId++, slot.type, army.faction(),
+                    slot.x, slot.y, army.hpMultiplier());
+            army.add(u);
+        }
+        if (lastDeployment.heroSkill() != null) {
+            army.setHeroSkill(lastDeployment.heroSkill());
+        }
+    }
+
     private void onStartBattle() {
         if (deploymentController == null || !deploymentController.canStart()) {
             return;
@@ -530,6 +547,9 @@ public class GameApp extends Application {
 
     private void beginBattle() {
         state.phase = GameState.Phase.BATTLE;
+        if (mode == Mode.CAMPAIGN) {
+            lastDeployment.snapshot(state.armyOf(PLAYER_FACTION));
+        }
         initialRedCount = aliveCount(state.red);
         initialBlueCount = aliveCount(state.blue);
         victoryFrames = 0;

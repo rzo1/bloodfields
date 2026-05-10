@@ -26,6 +26,8 @@ public final class Hud extends BorderPane {
     private final Army playerArmy;
     private final DeploymentController controller;
     private final Runnable onStartBattle;
+    private Runnable onRestoreLast;
+    private LastDeploymentMemory deploymentMemory;
 
     private static final String NO_SELECTION_HINT = "Select a unit type to see its ability.";
     private static final String SIEGE_WARNING_TEXT =
@@ -42,6 +44,7 @@ public final class Hud extends BorderPane {
     private final Label title = new Label("DEPLOYMENT");
     private final VBox roster = new VBox(4);
     private final Button autoFill = new Button("Auto-fill");
+    private final Button restoreLast = new Button("Same as last");
     private final Label rosterLabel = new Label("Roster");
     private final Separator sep1 = new Separator();
     private final Separator sep2 = new Separator();
@@ -108,6 +111,16 @@ public final class Hud extends BorderPane {
         autoFill.setMaxWidth(Double.MAX_VALUE);
         autoFill.setOnAction(e -> autoFill());
 
+        restoreLast.setMaxWidth(Double.MAX_VALUE);
+        restoreLast.setStyle("-fx-text-fill: #ffd76b;");
+        restoreLast.setDisable(true);
+        restoreLast.setOnAction(e -> {
+            if (onRestoreLast != null) {
+                onRestoreLast.run();
+                refresh();
+            }
+        });
+
         heroPicker = new HeroSkillPicker(skill -> {
             playerArmy.setHeroSkill(skill);
         });
@@ -142,6 +155,7 @@ public final class Hud extends BorderPane {
                 descriptionLabel,
                 siegeWarning,
                 autoFill,
+                restoreLast,
                 sepHero,
                 heroPicker,
                 sep2,
@@ -200,6 +214,8 @@ public final class Hud extends BorderPane {
         roster.setManaged(false);
         autoFill.setVisible(false);
         autoFill.setManaged(false);
+        restoreLast.setVisible(false);
+        restoreLast.setManaged(false);
         startButton.setVisible(false);
         startButton.setManaged(false);
         sep1.setVisible(false);
@@ -220,6 +236,16 @@ public final class Hud extends BorderPane {
 
     public void setSpeedLabel(String text) {
         speedLabel.setText(text == null ? "" : text);
+    }
+
+    public void setRestoreLast(LastDeploymentMemory memory, Runnable onRestoreLast) {
+        this.deploymentMemory = memory;
+        this.onRestoreLast = onRestoreLast;
+        refresh();
+    }
+
+    public Button restoreLastButton() {
+        return restoreLast;
     }
 
     public Label speedLabel() {
@@ -259,6 +285,12 @@ public final class Hud extends BorderPane {
         boolean showWarning = mapHasStructures() && armyHasNoRanged();
         siegeWarning.setVisible(showWarning);
         siegeWarning.setManaged(showWarning);
+
+        boolean canRestore = deploymentMemory != null
+                && deploymentMemory.hasSnapshot()
+                && onRestoreLast != null
+                && playerArmy.units().isEmpty();
+        restoreLast.setDisable(!canRestore);
 
         boolean hasGeneral = armyHasGeneral();
         heroPicker.setVisible(hasGeneral);
