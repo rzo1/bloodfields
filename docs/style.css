@@ -267,3 +267,94 @@ footer {
   margin-top: 8px;
   text-align: center;
 }
+
+.page-nav {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin: 0 0 24px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.page-nav a {
+  color: var(--text-dim);
+  padding: 2px 6px;
+}
+
+.page-nav a:hover {
+  color: var(--text-warn);
+  text-decoration: none;
+}
+
+.page-nav a.active {
+  color: var(--text-accent);
+  text-shadow: 0 0 6px rgba(200, 51, 46, 0.4);
+}
+
+.release {
+  margin: 24px 0;
+  padding: 12px 16px;
+  border-left: 3px solid var(--text-accent);
+  background: rgba(20, 18, 16, 0.55);
+  box-shadow: 0 4px 16px var(--shadow);
+}
+
+.release h3 {
+  margin: 0 0 4px;
+  color: var(--text-accent);
+  text-shadow: 0 0 6px rgba(200, 51, 46, 0.3);
+}
+
+.release time {
+  display: block;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+  margin-bottom: 12px;
+}
+
+.release-body {
+  line-height: 1.65;
+  padding-left: 4px;
+}
+
+.release-body h4 {
+  font-size: 15px;
+  margin: 16px 0 6px;
+  color: var(--text-primary);
+}
+
+.release-body h5 {
+  font-size: 13px;
+  margin: 12px 0 4px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.release-body code {
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--text-primary);
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+
+.release-body ul {
+  margin: 6px 0 12px;
+  padding-left: 22px;
+}
+
+.release-body li {
+  margin: 2px 0;
+}
+
+.release-body p {
+  margin: 6px 0;
+}

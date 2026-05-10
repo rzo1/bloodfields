@@ -22,6 +22,8 @@ public final class GameState {
     public Faction winner;
     public CorpseField corpses;
     public StructureField structures = new StructureField();
+    public FireField fireField = new FireField();
+    public final List<WallHit> wallHits = new ArrayList<>();
 
     public GameState(World world, Army red, Army blue, SpatialHashGrid grid) {
         this.phase = Phase.MAIN_MENU;

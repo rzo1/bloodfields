@@ -22,6 +22,7 @@ public final class DeploymentController {
     private final Supplier<Long> idSupplier;
     private final World world;
     private StructureField structures;
+    private VeteranRoster veteranRoster;
 
     private UnitType selectedType;
     private boolean active = true;
@@ -154,6 +155,19 @@ public final class DeploymentController {
         return structures;
     }
 
+    public void setVeteranRoster(VeteranRoster roster) {
+        this.veteranRoster = roster;
+    }
+
+    public VeteranRoster veteranRoster() {
+        return veteranRoster;
+    }
+
+    private int consumeVeteranRank(UnitType type) {
+        if (veteranRoster == null) return 0;
+        return veteranRoster.consumeHighestRank(type);
+    }
+
     public boolean tryGarrison(Structure host, UnitType type) {
         if (!active || host == null || type == null) return false;
         if (!type.ranged()) return false;
@@ -167,6 +181,13 @@ public final class DeploymentController {
                 playerArmy.hpMultiplier());
         if (!structures.canGarrison(host, candidate)) {
             return false;
+        }
+        int rank = consumeVeteranRank(type);
+        if (rank > 0) {
+            candidate.veteranRank = rank;
+            double bonus = candidate.bonusFromRank();
+            candidate.maxHp += bonus;
+            candidate.hp = candidate.maxHp;
         }
         playerArmy.add(candidate);
         structures.garrison(host, candidate);
@@ -188,6 +209,12 @@ public final class DeploymentController {
                         playerArmy.faction(), x, y, playerArmy.hpMultiplier());
                 if (structures.canGarrison(host, hypothetical)
                         && playerArmy.remainingBudget() >= selectedType.cost()) {
+                    int rank = consumeVeteranRank(selectedType);
+                    if (rank > 0) {
+                        hypothetical.veteranRank = rank;
+                        hypothetical.maxHp += hypothetical.bonusFromRank();
+                        hypothetical.hp = hypothetical.maxHp;
+                    }
                     playerArmy.add(hypothetical);
                     structures.garrison(host, hypothetical);
                     fireChanged();
@@ -210,8 +237,9 @@ public final class DeploymentController {
         if (playerArmy.remainingBudget() < selectedType.cost()) {
             return false;
         }
+        int rank = consumeVeteranRank(selectedType);
         Unit u = new Unit(idSupplier.get(), selectedType, playerArmy.faction(), sx, sy,
-                playerArmy.hpMultiplier());
+                playerArmy.hpMultiplier(), rank);
         playerArmy.add(u);
         fireChanged();
         return true;

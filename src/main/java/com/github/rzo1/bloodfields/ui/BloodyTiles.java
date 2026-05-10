@@ -10,11 +10,16 @@ public final class BloodyTiles {
 
     private static final Color STAIN = Color.web("#5a0c0c");
     private static final Color BONE = Color.web("#d8d2bf");
+    private static final Color SKULL_FILL = Color.web("#d8d2bf");
+    private static final Color SKULL_DARK = Color.web("#1a0f08");
     private static final double ALPHA_PER_DEATH = 0.08;
     private static final double MAX_ALPHA = 0.55;
     private static final double BONE_ALPHA = 0.7;
+    private static final double SKULL_ALPHA = 0.85;
     public static final int BONE_PILE_THRESHOLD = 8;
     public static final int BIG_BONE_PILE_THRESHOLD = 16;
+    public static final int SKULL_PILE_THRESHOLD = 16;
+    public static final int BIG_SKULL_PILE_THRESHOLD = 32;
 
     private final Map<Long, Integer> deathsPerTile = new HashMap<>();
     private final Map<Long, Double> firstDeathSimTime = new HashMap<>();
@@ -99,6 +104,14 @@ public final class BloodyTiles {
             }
             drawBonePile(gc, e.getKey(), count, tileSize);
         }
+        gc.setGlobalAlpha(SKULL_ALPHA);
+        for (Map.Entry<Long, Integer> e : deathsPerTile.entrySet()) {
+            int count = e.getValue();
+            if (count < SKULL_PILE_THRESHOLD) {
+                continue;
+            }
+            drawSkullPile(gc, e.getKey(), count, tileSize);
+        }
         gc.setGlobalAlpha(1.0);
         gc.restore();
     }
@@ -120,6 +133,51 @@ public final class BloodyTiles {
             double bx = col * tileSize + rx * (tileSize - boneSize);
             double by = row * tileSize + ry * (tileSize - boneSize * 0.5);
             gc.fillRect(bx, by, boneSize, boneSize * 0.5);
+        }
+    }
+
+    private static void drawSkullPile(GraphicsContext gc, long key, int count, double tileSize) {
+        int col = colOf(key);
+        int row = rowOf(key);
+        boolean big = count >= BIG_SKULL_PILE_THRESHOLD;
+        int skullCount = big ? 5 + ((int) (key & 0x3)) : 3 + ((int) (key & 0x1));
+        if (skullCount < 3) skullCount = 3;
+        if (big && skullCount > 8) skullCount = 8;
+        if (!big && skullCount > 5) skullCount = 5;
+        double skullSize = big ? 6.0 : 4.0;
+        long seed = key * 0xBF58476D1CE4E5B9L;
+        double centerX = (col + 0.5) * tileSize;
+        double centerY = (row + 0.5) * tileSize;
+        gc.setFill(SKULL_FILL);
+        for (int i = 0; i < skullCount; i++) {
+            seed = seed * 6364136223846793005L + 1442695040888963407L;
+            double rx = ((seed >>> 33) / (double) (1L << 31)) % 1.0;
+            seed = seed * 6364136223846793005L + 1442695040888963407L;
+            double ry = ((seed >>> 33) / (double) (1L << 31)) % 1.0;
+            if (rx < 0) rx = -rx;
+            if (ry < 0) ry = -ry;
+            double sx = centerX + (rx - 0.5) * tileSize * 0.55 - skullSize * 0.5;
+            double sy = centerY + (ry - 0.5) * tileSize * 0.55 - skullSize * 0.5;
+            gc.fillOval(sx, sy, skullSize, skullSize);
+        }
+        seed = key * 0xBF58476D1CE4E5B9L;
+        gc.setFill(SKULL_DARK);
+        for (int i = 0; i < skullCount; i++) {
+            seed = seed * 6364136223846793005L + 1442695040888963407L;
+            double rx = ((seed >>> 33) / (double) (1L << 31)) % 1.0;
+            seed = seed * 6364136223846793005L + 1442695040888963407L;
+            double ry = ((seed >>> 33) / (double) (1L << 31)) % 1.0;
+            if (rx < 0) rx = -rx;
+            if (ry < 0) ry = -ry;
+            double sx = centerX + (rx - 0.5) * tileSize * 0.55 - skullSize * 0.5;
+            double sy = centerY + (ry - 0.5) * tileSize * 0.55 - skullSize * 0.5;
+            double eyeR = Math.max(0.6, skullSize * 0.18);
+            gc.fillOval(sx + skullSize * 0.22 - eyeR * 0.5, sy + skullSize * 0.32 - eyeR * 0.5,
+                    eyeR, eyeR);
+            gc.fillOval(sx + skullSize * 0.78 - eyeR * 0.5, sy + skullSize * 0.32 - eyeR * 0.5,
+                    eyeR, eyeR);
+            gc.fillRect(sx + skullSize * 0.3, sy + skullSize * 0.7,
+                    skullSize * 0.4, Math.max(0.5, skullSize * 0.12));
         }
     }
 }

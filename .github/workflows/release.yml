@@ -71,6 +71,16 @@ jobs:
           path: ${{ matrix.cli_path }}
           if-no-files-found: error
 
+      # Platform-independent fat jar (JavaFX for all OSes bundled in). Built once
+      # on Linux to avoid uploading identical jars from three runners.
+      - name: Upload platform-independent jar
+        if: matrix.os_label == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bloodfields-jar
+          path: target/bloodfields-*-all.jar
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     needs: build
@@ -85,7 +95,7 @@ jobs:
       - name: Flatten artifact tree
         run: |
           mkdir -p release
-          find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.deb' -o -name 'bloodfields-cli' -o -name 'bloodfields-cli.exe' \) -print0 \
+          find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.deb' -o -name 'bloodfields-cli' -o -name 'bloodfields-cli.exe' -o -name '*-all.jar' \) -print0 \
             | while IFS= read -r -d '' f; do
                 base=$(basename "$f")
                 parent=$(basename "$(dirname "$f")")

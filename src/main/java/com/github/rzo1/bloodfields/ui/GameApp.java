@@ -2,13 +2,16 @@ package com.github.rzo1.bloodfields.ui;
 
 import com.github.rzo1.bloodfields.ai.AiTuning;
 import com.github.rzo1.bloodfields.ai.UnitAI;
+import com.github.rzo1.bloodfields.engine.Corpse;
 import com.github.rzo1.bloodfields.engine.CorpseField;
 import com.github.rzo1.bloodfields.engine.FixedTimestepDriver;
 import com.github.rzo1.bloodfields.engine.GameLoop;
 import com.github.rzo1.bloodfields.engine.GameState;
 import com.github.rzo1.bloodfields.engine.SpatialHashGrid;
 import com.github.rzo1.bloodfields.engine.World;
+import com.github.rzo1.bloodfields.model.Achievement;
 import com.github.rzo1.bloodfields.model.Army;
+import com.github.rzo1.bloodfields.model.BattleSummary;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitType;
@@ -38,8 +41,11 @@ import javafx.scene.text.FontWeight;
 import javafx.stage.Stage;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class GameApp extends Application {
@@ -65,6 +71,11 @@ public class GameApp extends Application {
     private FpsOverlay fpsOverlay;
     private MainMenuRenderer menuPane;
     private ResultRenderer resultRenderer;
+    private AchievementService achievementService;
+    private List<Achievement> newlyUnlockedAchievements = Collections.emptyList();
+    private int peakCorpsesOnScreen;
+    private int peakDeathsInOneTile;
+    private Map<UnitType, Integer> initialPlayerComposition = Collections.emptyMap();
     private HandoverRenderer handoverRenderer;
     private SoundService sounds;
     private ParticleSystem particles;
@@ -79,6 +90,8 @@ public class GameApp extends Application {
     private BattleSmoke battleSmoke;
     private Vulture vulture;
     private CameraShake cameraShake;
+    private BloodTrails bloodTrails;
+    private WallSplatter wallSplatter;
     private java.util.Map<Long, com.github.rzo1.bloodfields.model.UnitType> killerByUnitId;
     private double simTime;
     private boolean victorySoundPlayed;
@@ -86,6 +99,7 @@ public class GameApp extends Application {
     private WeatherSystem weather = new WeatherSystem();
     private HelpOverlay helpOverlay = new HelpOverlay();
     private final LastDeploymentMemory lastDeployment = new LastDeploymentMemory();
+    private final VeteranRoster veteranRoster = new VeteranRoster();
 
     private Canvas canvas;
     private BorderPane root;
@@ -120,6 +134,7 @@ public class GameApp extends Application {
         overlay = new DeploymentOverlayRenderer();
         fpsOverlay = new FpsOverlay();
         resultRenderer = new ResultRenderer();
+        achievementService = new AchievementService();
         handoverRenderer = new HandoverRenderer();
         sounds = new SoundService();
         particles = new ParticleSystem();
@@ -135,6 +150,8 @@ public class GameApp extends Application {
         battleSmoke.setWorldBounds(WIDTH, HEIGHT);
         vulture = new Vulture();
         cameraShake = new CameraShake();
+        bloodTrails = new BloodTrails();
+        wallSplatter = new WallSplatter();
         killerByUnitId = new java.util.HashMap<>();
         speed = new SpeedControl();
         simTime = 0.0;
@@ -151,10 +168,25 @@ public class GameApp extends Application {
         menuPane.setOnLoadLevel(idx -> {
             currentLevelIndex = idx;
             campaignComplete = false;
+            veteranRoster.clear();
             startCampaignFlow();
+        });
+        menuPane.setOnUpdateOpenUrl(url -> {
+            if (url != null && getHostServices() != null) {
+                getHostServices().showDocument(url);
+            }
         });
 
         bootMainMenu();
+
+        UpdateChecker updateChecker = new UpdateChecker();
+        updateChecker.checkAsync(result -> Platform.runLater(() -> {
+            if (result == null || !result.newer()) return;
+            String tag = result.latestTag();
+            if (tag == null || tag.isEmpty()) return;
+            if (updateChecker.isSnoozed(tag)) return;
+            menuPane.showUpdateBanner(tag, result.htmlUrl(), () -> updateChecker.snooze(tag));
+        }));
 
         canvas.setFocusTraversable(true);
         canvas.addEventHandler(MouseEvent.MOUSE_PRESSED, this::onCanvasMousePressed);
@@ -334,20 +366,31 @@ public class GameApp extends Application {
         if (state.phase == GameState.Phase.BATTLE) {
             driver.advance(scaledFrame, () -> loop.step(driver.tickSeconds()));
             checkBattleEnd();
+            updateBattleStats();
             simTime += scaledFrame;
             weather.update(scaledFrame);
         }
 
         particles.update(scaledFrame);
-        crows.update(scaledFrame, bloodyTiles, state.world.tileSize, simTime);
+        crows.update(scaledFrame, bloodyTiles, state.world.tileSize, simTime, state.corpses);
         stuckArrows.update(scaledFrame);
         ragdolls.update(scaledFrame);
         scorchMarks.update(scaledFrame, particles, state.world.tileSize);
-        vulture.update(scaledFrame, bloodyTiles, state.world.tileSize, simTime);
+        vulture.update(scaledFrame, bloodyTiles, state.world.tileSize, simTime, state.corpses);
         cameraShake.update(scaledFrame);
+        renderer.updateFireFlicker(scaledFrame);
 
         List<Unit> all = collectUnitsForRender();
         battleSmoke.update(scaledFrame, state.corpses != null ? state.corpses.size() : 0);
+        if (bloodTrails != null) {
+            bloodTrails.update(all);
+        }
+        if (wallSplatter != null && state.wallHits != null && !state.wallHits.isEmpty()) {
+            for (com.github.rzo1.bloodfields.engine.WallHit hit : state.wallHits) {
+                wallSplatter.recordHit(hit.structure(), hit.x(), hit.y());
+            }
+            state.wallHits.clear();
+        }
         renderer.corpseRenderer().update(scaledFrame, state.corpses);
         hitTracker.detectHits(all, particles, state.projectiles,
                 stuckArrows, cameraShake, killerByUnitId, scorchMarks, state.world.tileSize);
@@ -357,6 +400,7 @@ public class GameApp extends Application {
         boolean redSky = mode == Mode.CAMPAIGN && currentLevelIndex >= 4;
         renderer.setAuraContext(state, simTime);
         renderer.setStructureField(state.structures);
+        renderer.setGoreContext(state.fireField, bloodTrails, wallSplatter);
         renderer.render(g, WIDTH, HEIGHT, state.world.terrain, state.world.tileSize,
                 all, state.projectiles, particles.pools(),
                 bloodyTiles, state.corpses, crows, camera, campaignLevel, redSky,
@@ -386,7 +430,8 @@ public class GameApp extends Application {
                     : null;
             resultRenderer.render(g, WIDTH, HEIGHT, state.winner,
                     redCasualties(), initialRedCount,
-                    blueCasualties(), initialBlueCount, code);
+                    blueCasualties(), initialBlueCount, code,
+                    newlyUnlockedAchievements);
             if (mode == Mode.CAMPAIGN && campaignComplete && state.winner == PLAYER_FACTION) {
                 renderCampaignBanner(g);
             }
@@ -447,6 +492,7 @@ public class GameApp extends Application {
         deploymentZone = null;
         versus = null;
         mode = Mode.CAMPAIGN;
+        veteranRoster.clear();
         root.setCenter(menuPane);
     }
 
@@ -478,6 +524,9 @@ public class GameApp extends Application {
         deploymentZone = new DeploymentZone(0, HEIGHT / 2.0, WIDTH, HEIGHT);
         deploymentController = new DeploymentController(canvas, playerArmy, deploymentZone, TILE,
                 () -> state.nextUnitId++, world);
+        if (mode == Mode.CAMPAIGN) {
+            deploymentController.setVeteranRoster(veteranRoster);
+        }
 
         hud = new Hud(playerArmy, deploymentController, this::onStartBattle);
         hud.setLevelInfo(level.number(), levels.size(), level.name());
@@ -516,10 +565,12 @@ public class GameApp extends Application {
         if (army == null || !lastDeployment.hasSnapshot()) return;
         java.util.List<Unit> existing = new java.util.ArrayList<>(army.units());
         for (Unit u : existing) army.remove(u);
+        boolean campaign = mode == Mode.CAMPAIGN;
         for (LastDeploymentMemory.Slot slot : lastDeployment.slots()) {
             if (army.remainingBudget() < slot.type.cost()) break;
+            int rank = campaign ? veteranRoster.consumeHighestRank(slot.type) : 0;
             Unit u = new Unit(state.nextUnitId++, slot.type, army.faction(),
-                    slot.x, slot.y, army.hpMultiplier());
+                    slot.x, slot.y, army.hpMultiplier(), rank);
             army.add(u);
         }
         if (lastDeployment.heroSkill() != null) {
@@ -556,6 +607,10 @@ public class GameApp extends Application {
         }
         initialRedCount = aliveCount(state.red);
         initialBlueCount = aliveCount(state.blue);
+        initialPlayerComposition = compositionOf(state.armyOf(PLAYER_FACTION));
+        peakCorpsesOnScreen = 0;
+        peakDeathsInOneTile = 0;
+        newlyUnlockedAchievements = Collections.emptyList();
         victoryFrames = 0;
         if (deploymentController != null) {
             deploymentController.setActive(false);
@@ -619,14 +674,102 @@ public class GameApp extends Application {
                 if (mode == Mode.CAMPAIGN) {
                     handleCampaignWinLoss(survivor);
                 }
+                evaluateAchievements(survivor);
             }
         } else {
             victoryFrames = 0;
         }
     }
 
+    private void updateBattleStats() {
+        if (state == null) return;
+        if (state.corpses != null) {
+            int n = state.corpses.size();
+            if (n > peakCorpsesOnScreen) peakCorpsesOnScreen = n;
+        }
+        if (bloodyTiles != null) {
+            Map<Long, Integer> snap = bloodyTiles.snapshot();
+            if (snap != null) {
+                for (Integer v : snap.values()) {
+                    if (v != null && v > peakDeathsInOneTile) peakDeathsInOneTile = v;
+                }
+            }
+        }
+    }
+
+    private void evaluateAchievements(Faction survivor) {
+        if (achievementService == null) {
+            newlyUnlockedAchievements = Collections.emptyList();
+            return;
+        }
+        BattleSummary summary = buildBattleSummary(survivor);
+        try {
+            List<Achievement> unlocked = achievementService.evaluate(summary);
+            newlyUnlockedAchievements = unlocked == null ? Collections.emptyList() : unlocked;
+        } catch (RuntimeException ignored) {
+            newlyUnlockedAchievements = Collections.emptyList();
+        }
+    }
+
+    private BattleSummary buildBattleSummary(Faction survivor) {
+        BattleSummary.Mode bsMode = switch (mode) {
+            case CAMPAIGN -> BattleSummary.Mode.CAMPAIGN;
+            case VERSUS -> BattleSummary.Mode.VERSUS;
+            case SKIRMISH -> BattleSummary.Mode.SKIRMISH;
+        };
+        int levelNumber = 0;
+        if (mode == Mode.CAMPAIGN && levels != null && currentLevelIndex >= 0 && currentLevelIndex < levels.size()) {
+            levelNumber = levels.get(currentLevelIndex).number();
+        }
+        Army playerArmy = state == null ? null : state.armyOf(PLAYER_FACTION);
+        boolean generalAlive = playerArmy != null && playerArmy.hasGeneralAlive();
+        int dragonsKilled = countEnemyDragonCorpses();
+        int playerCasualties = mode == Mode.CAMPAIGN || PLAYER_FACTION == Faction.RED
+                ? redCasualties() : blueCasualties();
+        int enemyCasualties = PLAYER_FACTION == Faction.RED ? blueCasualties() : redCasualties();
+        return BattleSummary.builder()
+                .mode(bsMode)
+                .levelNumber(levelNumber)
+                .winner(survivor)
+                .playerFaction(PLAYER_FACTION)
+                .simSeconds(simTime)
+                .playerArmyComposition(initialPlayerComposition)
+                .playerCasualties(playerCasualties)
+                .enemyCasualties(enemyCasualties)
+                .peakCorpsesOnScreen(peakCorpsesOnScreen)
+                .dragonsKilledByPlayer(dragonsKilled)
+                .peakDeathsInOneTile(peakDeathsInOneTile)
+                .playerGeneralAlive(generalAlive)
+                .reachedVultureLevel(peakDeathsInOneTile >= Vulture.MIN_DEATHS_TO_ATTRACT)
+                .build();
+    }
+
+    private int countEnemyDragonCorpses() {
+        if (state == null || state.corpses == null) return 0;
+        int n = 0;
+        Faction enemy = PLAYER_FACTION.opponent();
+        for (Corpse c : state.corpses.corpses()) {
+            if (c == null) continue;
+            if (c.type() == UnitType.DRAGON && c.faction() == enemy) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private static Map<UnitType, Integer> compositionOf(Army army) {
+        if (army == null) return Collections.emptyMap();
+        EnumMap<UnitType, Integer> m = new EnumMap<>(UnitType.class);
+        for (Unit u : army.units()) {
+            if (u == null) continue;
+            m.merge(u.type, 1, Integer::sum);
+        }
+        return Collections.unmodifiableMap(m);
+    }
+
     private void handleCampaignWinLoss(Faction survivor) {
         if (survivor == PLAYER_FACTION) {
+            veteranRoster.recordSurvivors(state.armyOf(PLAYER_FACTION));
             boolean wasFinal = LevelProgression.isFinal(currentLevelIndex, levels.size());
             int nextIdx = LevelProgression.onWin(currentLevelIndex, levels.size());
             if (wasFinal) {
@@ -1382,6 +1525,10 @@ public class GameApp extends Application {
         if (battleSmoke != null) battleSmoke.clear();
         if (vulture != null) vulture.clear();
         if (cameraShake != null) cameraShake.clear();
+        if (bloodTrails != null) bloodTrails.clear();
+        if (wallSplatter != null) wallSplatter.clear();
+        if (state != null && state.fireField != null) state.fireField.clear();
+        if (state != null && state.wallHits != null) state.wallHits.clear();
         if (killerByUnitId != null) killerByUnitId.clear();
         if (renderer != null && renderer.corpseRenderer() != null) {
             renderer.corpseRenderer().clear();

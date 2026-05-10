@@ -34,6 +34,9 @@ public final class GameLoop {
         decrementCooldowns(state.red, dtSeconds);
         decrementCooldowns(state.blue, dtSeconds);
 
+        applyBurning(state.red, dtSeconds);
+        applyBurning(state.blue, dtSeconds);
+
         rebuildGrid();
 
         if (state.structures != null) {
@@ -46,10 +49,44 @@ public final class GameLoop {
         integrateUnits(state.red, dtSeconds);
         integrateUnits(state.blue, dtSeconds);
 
+        if (state.fireField != null && state.world != null) {
+            igniteFireTrails(state.red, state.world.tileSize);
+            igniteFireTrails(state.blue, state.world.tileSize);
+            state.fireField.update(dtSeconds, state.red.units(), state.blue.units(),
+                    state.world.tileSize);
+        }
+
         integrateProjectiles(dtSeconds);
 
         pruneDead(state.red);
         pruneDead(state.blue);
+    }
+
+    private void applyBurning(Army army, double dt) {
+        for (Unit u : army.units()) {
+            if (!u.isAlive()) continue;
+            if (u.burningSeconds > 0.0) {
+                double dmg = u.burningDamagePerSec * dt;
+                u.burningSeconds -= dt;
+                if (u.burningSeconds <= 0.0) {
+                    u.burningSeconds = 0.0;
+                    u.burningDamagePerSec = 0.0;
+                }
+                if (dmg > 0.0) {
+                    u.takeDamage(dmg);
+                }
+            }
+        }
+    }
+
+    private void igniteFireTrails(Army army, double tileSize) {
+        if (state.fireField == null || tileSize <= 0.0) return;
+        for (Unit u : army.units()) {
+            if (!u.isAlive()) continue;
+            if (u.burningSeconds <= 0.0) continue;
+            if (u.type.flying()) continue;
+            state.fireField.igniteAt(u.x, u.y, tileSize);
+        }
     }
 
     private void decrementCooldowns(Army army, double dt) {
@@ -172,6 +209,9 @@ public final class GameLoop {
                     }
                     if (blocker == null) {
                         state.structures.damage(hit, p.damage);
+                        if (state.wallHits != null) {
+                            state.wallHits.add(new WallHit(hit, p.x, p.y));
+                        }
                         p.alive = false;
                         it.remove();
                         continue;
@@ -192,6 +232,7 @@ public final class GameLoop {
                 double base = p.damage * DamageModel.damageMultiplier(p.attackerType, blocker.type);
                 double dealt = HeroAura.modifyIncomingDamage(state, blocker, base);
                 applyDamageRespectingGarrison(blocker, dealt);
+                applyBurningFromAttacker(blocker, p.attackerType);
             }
             return;
         }
@@ -202,6 +243,28 @@ public final class GameLoop {
             double base = p.damage * DamageModel.damageMultiplier(p.attackerType, e.type);
             double dealt = HeroAura.modifyIncomingDamage(state, e, base);
             applyDamageRespectingGarrison(e, dealt);
+            applyBurningFromAttacker(e, p.attackerType);
+        }
+    }
+
+    private static void applyBurningFromAttacker(Unit target, com.github.rzo1.bloodfields.model.UnitType attackerType) {
+        if (target == null || attackerType == null || !target.isAlive()) return;
+        double duration;
+        double dps;
+        if (attackerType == com.github.rzo1.bloodfields.model.UnitType.DRAGON) {
+            duration = 8.0;
+            dps = 10.0;
+        } else if (attackerType == com.github.rzo1.bloodfields.model.UnitType.MAGE) {
+            duration = 4.0;
+            dps = 6.0;
+        } else {
+            return;
+        }
+        if (duration > target.burningSeconds) {
+            target.burningSeconds = duration;
+        }
+        if (dps > target.burningDamagePerSec) {
+            target.burningDamagePerSec = dps;
         }
     }
 

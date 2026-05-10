@@ -1,10 +1,14 @@
 package com.github.rzo1.bloodfields.ui;
 
+import com.github.rzo1.bloodfields.model.Achievement;
+import com.github.rzo1.bloodfields.model.Achievements;
 import com.github.rzo1.bloodfields.model.Faction;
 import javafx.application.Platform;
 import javafx.scene.canvas.Canvas;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -51,6 +55,13 @@ class ResultRendererSmokeTest {
                         Faction.BLUE, 30, 30, 18, 32);
                 renderer.render(canvas.getGraphicsContext2D(), canvas.getWidth(), canvas.getHeight(),
                         null, 25, 30, 25, 30);
+                List<Achievement> unlocked = List.of(
+                        Achievements.byId(Achievements.FIRST_BLOOD),
+                        Achievements.byId(Achievements.CORPSE_PILE));
+                renderer.render(canvas.getGraphicsContext2D(), canvas.getWidth(), canvas.getHeight(),
+                        Faction.RED, 12, 30, 30, 30, "WEDGE", unlocked);
+                renderer.render(canvas.getGraphicsContext2D(), canvas.getWidth(), canvas.getHeight(),
+                        Faction.RED, 12, 30, 30, 30, null, Collections.emptyList());
             } catch (Throwable t) {
                 error.set(t);
             } finally {

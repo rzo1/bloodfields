@@ -3,6 +3,7 @@ package com.github.rzo1.bloodfields.ui;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.input.KeyCode;
@@ -11,6 +12,7 @@ import javafx.scene.layout.VBox;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 public final class MainMenuRenderer extends VBox {
@@ -24,11 +26,16 @@ public final class MainMenuRenderer extends VBox {
     private final Label codeError = new Label("");
     private final Label hint = new Label("ENTER / SPACE start campaign  —  ESC quits");
     private final Label versionLabel = new Label(BuildInfo.displayString());
+    private final HBox updateBanner = new HBox(10);
+    private final Label updateLabel = new Label();
+    private final Hyperlink updateDownloadLink = new Hyperlink("Download");
+    private final Button updateDismissButton = new Button("Dismiss");
 
     private Runnable onCampaign;
     private Runnable onSkirmish;
     private Runnable onVersus;
     private IntConsumer onLoadLevel;
+    private Consumer<String> onUpdateOpenUrl;
 
     public MainMenuRenderer() {
         setAlignment(Pos.CENTER);
@@ -38,6 +45,8 @@ public final class MainMenuRenderer extends VBox {
 
         title.setFont(Font.font("Georgia", FontWeight.BOLD, 64));
         title.setStyle(Theme.menuTitleStyle());
+
+        configureUpdateBanner();
 
         styleMenuButton(campaignButton);
         campaignButton.setOnAction(e -> {
@@ -83,8 +92,62 @@ public final class MainMenuRenderer extends VBox {
         versionLabel.setAlignment(Pos.BOTTOM_RIGHT);
         VBox.setMargin(versionLabel, new Insets(20, 0, 0, 0));
 
-        getChildren().addAll(title, campaignButton, skirmishButton, versusButton, codeRow, codeError, hint, versionLabel);
+        getChildren().addAll(title, updateBanner, campaignButton, skirmishButton, versusButton, codeRow, codeError, hint, versionLabel);
     }
+
+    private void configureUpdateBanner() {
+        updateLabel.setStyle(
+                "-fx-text-fill: " + Theme.TEXT_PRIMARY + ";"
+                        + "-fx-font-family: 'Georgia','Serif';"
+                        + "-fx-font-size: 13px;"
+                        + "-fx-font-weight: bold;");
+        updateDownloadLink.setStyle(
+                "-fx-text-fill: " + Theme.TEXT_ACCENT + ";"
+                        + "-fx-font-family: 'Georgia','Serif';"
+                        + "-fx-font-size: 13px;"
+                        + "-fx-font-weight: bold;");
+        updateDismissButton.getStyleClass().add(Theme.BUTTON_CLASS);
+        updateDismissButton.setFont(Font.font("Georgia", FontWeight.NORMAL, 11));
+        updateBanner.setAlignment(Pos.CENTER_LEFT);
+        updateBanner.setPadding(new Insets(8, 12, 8, 12));
+        updateBanner.setStyle(
+                "-fx-background-color: rgba(40, 12, 10, 0.9);"
+                        + "-fx-border-color: " + Theme.TEXT_ACCENT + " transparent transparent transparent;"
+                        + "-fx-border-width: 0 0 0 4;"
+                        + "-fx-border-style: solid;"
+                        + "-fx-border-color: transparent transparent transparent " + Theme.TEXT_ACCENT + ";");
+        updateBanner.getChildren().addAll(updateLabel, updateDownloadLink, updateDismissButton);
+        updateBanner.setVisible(false);
+        updateBanner.setManaged(false);
+    }
+
+    public void showUpdateBanner(String tag, String url, Runnable onDismiss) {
+        updateLabel.setText("🩸 NEW VERSION AVAILABLE: " + tag);
+        updateDownloadLink.setOnAction(e -> {
+            if (onUpdateOpenUrl != null && url != null) {
+                onUpdateOpenUrl.accept(url);
+            }
+        });
+        updateDismissButton.setOnAction(e -> {
+            if (onDismiss != null) {
+                onDismiss.run();
+            }
+            hideUpdateBanner();
+        });
+        updateBanner.setVisible(true);
+        updateBanner.setManaged(true);
+    }
+
+    public void hideUpdateBanner() {
+        updateBanner.setVisible(false);
+        updateBanner.setManaged(false);
+    }
+
+    public void setOnUpdateOpenUrl(Consumer<String> handler) {
+        this.onUpdateOpenUrl = handler;
+    }
+
+    HBox updateBanner() { return updateBanner; }
 
     private static void styleMenuButton(Button b) {
         b.setFont(Font.font("Georgia", FontWeight.BOLD, 18));

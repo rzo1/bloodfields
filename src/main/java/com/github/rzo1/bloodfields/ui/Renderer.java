@@ -85,9 +85,19 @@ public final class Renderer {
     private static final double HP_H = 3.0;
     private static final double HP_DY = 14.0;
 
+    private static final Color VETERAN_TRIM = Color.web("#ffd76b");
+    private static final double VETERAN_TRIM_RADIUS = 13.0;
+    private static final double VETERAN_STAR_DY = 18.0;
+    private static final double VETERAN_STAR_R = 2.0;
+
     private final AssetLoader assets = AssetLoader.get();
     private final CorpseRenderer corpseRenderer = new CorpseRenderer();
     private final StructureRenderer structureRenderer = new StructureRenderer();
+    private final FireRenderer fireRenderer = new FireRenderer();
+
+    private com.github.rzo1.bloodfields.engine.FireField fireField;
+    private BloodTrails bloodTrails;
+    private WallSplatter wallSplatter;
 
     private GameState auraState;
     private double auraSimTime;
@@ -100,6 +110,21 @@ public final class Renderer {
 
     public void setStructureField(StructureField field) {
         this.structureField = field;
+    }
+
+    public void setGoreContext(com.github.rzo1.bloodfields.engine.FireField fireField,
+                               BloodTrails bloodTrails, WallSplatter wallSplatter) {
+        this.fireField = fireField;
+        this.bloodTrails = bloodTrails;
+        this.wallSplatter = wallSplatter;
+    }
+
+    public void updateFireFlicker(double dt) {
+        fireRenderer.update(dt);
+    }
+
+    public FireRenderer fireRenderer() {
+        return fireRenderer;
     }
 
     public StructureRenderer structureRenderer() {
@@ -213,8 +238,20 @@ public final class Renderer {
             scorchMarks.render(gc, tileSize, camera);
         }
 
+        if (fireField != null && tileSize > 0.0) {
+            fireRenderer.render(gc, fireField, tileSize, camera);
+        }
+
+        if (bloodTrails != null) {
+            bloodTrails.render(gc, camera);
+        }
+
         if (structureField != null) {
             structureRenderer.render(gc, structureField, camera);
+        }
+
+        if (wallSplatter != null && structureField != null) {
+            wallSplatter.render(gc, structureField, camera);
         }
 
         if (limbs != null) {
@@ -247,6 +284,8 @@ public final class Renderer {
         camera.apply(gc);
         drawUnits(gc, units);
         gc.restore();
+
+        fireRenderer.renderUnitFlames(gc, units, camera);
 
         if (stuckArrows != null) {
             stuckArrows.render(gc, units, camera);
@@ -394,6 +433,7 @@ public final class Renderer {
             if (u == null || u.state == UnitState.DEAD) {
                 continue;
             }
+            drawVeteranTrim(gc, u);
             Color fill = assets.factionFill(u.faction);
             Color stroke = assets.factionStroke(u.faction);
             UnitShape shape = shapeFor(u.type);
@@ -436,7 +476,29 @@ public final class Renderer {
                     drawSquareUnit(gc, u, fill, stroke);
                     break;
             }
+            drawVeteranStar(gc, u);
         }
+    }
+
+    private void drawVeteranTrim(GraphicsContext gc, Unit u) {
+        if (u.veteranRank <= 0) return;
+        double width = u.veteranRank >= 2 ? 2.0 : 1.0;
+        gc.save();
+        gc.setStroke(VETERAN_TRIM);
+        gc.setLineWidth(width);
+        gc.strokeOval(u.x - VETERAN_TRIM_RADIUS, u.y - VETERAN_TRIM_RADIUS,
+                VETERAN_TRIM_RADIUS * 2.0, VETERAN_TRIM_RADIUS * 2.0);
+        gc.restore();
+        gc.setLineWidth(1.5);
+    }
+
+    private void drawVeteranStar(GraphicsContext gc, Unit u) {
+        if (u.veteranRank < 3) return;
+        gc.save();
+        gc.setFill(VETERAN_TRIM);
+        gc.fillOval(u.x - VETERAN_STAR_R, u.y - VETERAN_STAR_DY - VETERAN_STAR_R,
+                VETERAN_STAR_R * 2.0, VETERAN_STAR_R * 2.0);
+        gc.restore();
     }
 
     private void drawSquareUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {

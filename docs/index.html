@@ -28,6 +28,11 @@
     <p class="tagline">armies clash. bones break. crows feast.</p>
   </header>
 
+  <nav class="page-nav">
+    <a href="index.html" class="active" aria-current="page">Home</a>
+    <a href="changelog.html">Changelog</a>
+  </nav>
+
   <p class="intro">
     Bloodfield is an <em>auto-battler</em> — you don't control units after the fight starts.
     You spend a points budget arranging your line: pikemen up front, archers on the flanks,
@@ -76,8 +81,9 @@
       bleeds wrong.
     </aside>
     <p>Pick your platform. Each release ships a <strong>GUI installer</strong>
-      (bundled JRE, no Java needed) and a <strong>headless CLI native binary</strong>
-      (compiled with GraalVM, no JVM, boots in milliseconds).</p>
+      (bundled JRE, no Java needed), a <strong>headless CLI native binary</strong>
+      (compiled with GraalVM, no JVM, boots in milliseconds), and a
+      <strong>platform-independent fat jar</strong> (run anywhere with JRE 21+).</p>
     <div id="downloads">
       <p class="spinner">Fetching latest release&hellip;</p>
     </div>
@@ -94,7 +100,7 @@ mvn javafx:run
 
 # Fat jar
 mvn -DskipTests package
-java -jar target/bloodfield-0.1.0-SNAPSHOT-all.jar
+java -jar target/bloodfields-*-all.jar
 
 # Native installer (jpackage, bundles a JRE)
 mvn -Ppackage-native package -DskipTests
@@ -106,6 +112,7 @@ mvn -Ppackage-graal package -DskipTests
 
   <footer>
     <p>Releases are built automatically by GitHub Actions on every <code>v*</code> tag push.</p>
+    <p><a href="changelog.html">View full changelog →</a></p>
     <p><a href="https://github.com/rzo1/bloodfields">github.com/rzo1/bloodfields</a></p>
   </footer>
 </main>
@@ -141,6 +148,13 @@ mvn -Ppackage-graal package -DskipTests
       icon: '🐧', // 🐧
       installer: { match: /\.deb$/i, label: 'Installer (.deb)', hint: 'Debian/Ubuntu. sudo apt install ./pkg.deb' },
       cli: { match: /(^|[^.])bloodfields-cli$/i, fileMatch: /linux/i, label: 'CLI binary', hint: 'x86_64. chmod +x then run.' }
+    },
+    {
+      key: 'any',
+      label: 'Any platform',
+      icon: '☕',
+      installer: { match: /-all\.jar$/i, label: 'Fat jar (.jar)', hint: 'Bundles JavaFX for all OSes. Needs JRE 21+: java -jar bloodfields-*-all.jar' },
+      cli: null
     }
   ];
 
@@ -182,8 +196,8 @@ mvn -Ppackage-graal package -DskipTests
     heading.appendChild(el('span', { text: platform.label }));
     box.appendChild(heading);
 
-    var installer = findAsset(assets, platform.installer);
-    var cli = findAsset(assets, platform.cli);
+    var installer = platform.installer ? findAsset(assets, platform.installer) : null;
+    var cli = platform.cli ? findAsset(assets, platform.cli) : null;
 
     if (installer) {
       box.appendChild(renderDownloadButton(installer, platform.installer.label, platform.installer.hint));
