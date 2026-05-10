@@ -15,6 +15,12 @@
    ▓▓▒▒░░  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  ░░▒▒▓▓
 ```
 
+## Disclaimer
+
+> This game was **fully vibe-coded** — no design doc, no roadmap, no plan beyond
+> "make it gnarly". PRs are welcome. New **vibe-coded** features are even more
+> welcome. If something's broken, weird, or you have an idea, [open an issue](https://github.com/rzo1/bloodfields/issues).
+
 ## About
 
 Bloodfield is a top-down auto-battler. You place an army during a deployment phase,
