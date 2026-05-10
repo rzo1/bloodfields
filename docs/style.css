@@ -1,0 +1,234 @@
+/* Bloodfield download page — palette mirrors src/main/java/com/example/armyclash/ui/Theme.java */
+
+:root {
+  --panel-bg: rgba(20, 18, 16, 0.92);
+  --root-bg-top: #100806;
+  --root-bg-bottom: #1f100c;
+  --button-bg-top: #2a2018;
+  --button-bg-bottom: #1a1310;
+  --button-hover-top: #3a2820;
+  --button-hover-bottom: #2a1815;
+  --button-border: #5a1a14;
+  --text-primary: #e8d8c8;
+  --text-dim: #7a6c5c;
+  --text-accent: #c8332e;
+  --text-warn: #ffa040;
+  --divider: #3a2520;
+  --shadow: rgba(0, 0, 0, 0.6);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: linear-gradient(to bottom, var(--root-bg-top), var(--root-bg-bottom));
+  color: var(--text-primary);
+  font-family: 'Georgia', 'Times New Roman', serif;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 24px 96px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.ascii {
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.15;
+  color: var(--text-accent);
+  text-shadow: 0 0 12px rgba(200, 51, 46, 0.4);
+  white-space: pre;
+  overflow-x: auto;
+  padding: 8px 0;
+  margin: 0;
+}
+
+.tagline {
+  font-style: italic;
+  font-size: 18px;
+  color: var(--text-dim);
+  margin-top: 12px;
+  letter-spacing: 0.04em;
+}
+
+h1, h2, h3 {
+  font-family: 'Georgia', 'Times New Roman', serif;
+  color: var(--text-primary);
+  font-weight: bold;
+}
+
+h2 {
+  font-size: 22px;
+  margin-top: 40px;
+  margin-bottom: 16px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-accent);
+  text-shadow: 0 0 8px rgba(200, 51, 46, 0.3);
+}
+
+h3 {
+  font-size: 16px;
+  margin-top: 20px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+p {
+  margin: 8px 0 16px;
+}
+
+a {
+  color: var(--text-warn);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+
+.platform-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.platform {
+  background: var(--panel-bg);
+  border: 1px solid var(--button-border);
+  border-radius: 2px;
+  padding: 16px;
+  box-shadow: 0 4px 16px var(--shadow);
+}
+
+.platform h3 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform .icon {
+  font-size: 22px;
+}
+
+.download-btn {
+  display: block;
+  background: linear-gradient(to bottom, var(--button-bg-top), var(--button-bg-bottom));
+  border: 1px solid var(--button-border);
+  border-radius: 2px;
+  color: var(--text-primary);
+  padding: 8px 12px;
+  margin: 6px 0;
+  font-family: 'Georgia', serif;
+  font-weight: bold;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.download-btn:hover {
+  background: linear-gradient(to bottom, var(--button-hover-top), var(--button-hover-bottom));
+  color: var(--text-warn);
+  text-decoration: none;
+}
+
+.download-btn small {
+  display: block;
+  font-weight: normal;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+.notice {
+  background: rgba(200, 51, 46, 0.08);
+  border: 1px solid var(--button-border);
+  border-left: 3px solid var(--text-accent);
+  padding: 12px 16px;
+  margin: 16px 0;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.notice.error {
+  color: var(--text-warn);
+  font-style: normal;
+}
+
+pre.shell {
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--divider);
+  border-left: 3px solid var(--text-accent);
+  padding: 12px 16px;
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+footer {
+  margin-top: 48px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.spinner {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.screenshots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.screenshots figure {
+  margin: 0;
+  background: var(--panel-bg);
+  border: 1px solid var(--button-border);
+  border-radius: 2px;
+  padding: 8px;
+  box-shadow: 0 4px 16px var(--shadow);
+}
+
+.screenshots figure.wide {
+  grid-column: 1 / -1;
+}
+
+.screenshots img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--divider);
+  border-radius: 2px;
+}
+
+.screenshots figcaption {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-style: italic;
+  margin-top: 8px;
+  text-align: center;
+}

@@ -4,8 +4,8 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.example</groupId>
-    <artifactId>army-clash</artifactId>
+    <groupId>com.github.rzo1</groupId>
+    <artifactId>bloodfield</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>bloodfield</name>
@@ -16,6 +16,15 @@
         <junit.version>5.11.0</junit.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <gitcommitid.skip>false</gitcommitid.skip>
+        <jpackage.appVersion>1.0.0</jpackage.appVersion>
+        <jpackage.appName>Bloodfield</jpackage.appName>
+        <jpackage.mainJar>bloodfield-${project.version}-all.jar</jpackage.mainJar>
+        <jpackage.mainClass>com.github.rzo1.armyclash.ui.Launcher</jpackage.mainClass>
+        <jpackage.input>${project.build.directory}/jpackage-input</jpackage.input>
+        <jpackage.dest>${project.build.directory}/installers</jpackage.dest>
+        <graal.mainClass>com.github.rzo1.armyclash.cli.CliMain</graal.mainClass>
+        <graal.imageName>bloodfield-cli</graal.imageName>
+        <graal.configDir>${project.basedir}/src/main/resources/META-INF/native-image</graal.configDir>
     </properties>
 
     <profiles>
@@ -29,6 +38,301 @@
             <properties>
                 <gitcommitid.skip>true</gitcommitid.skip>
             </properties>
+        </profile>
+
+        <profile>
+            <id>package-native</id>
+            <activation>
+                <property>
+                    <name>package-native</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>stage-fat-jar-for-jpackage</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <outputDirectory>${jpackage.input}</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>${project.build.directory}</directory>
+                                            <includes>
+                                                <include>${jpackage.mainJar}</include>
+                                            </includes>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.panteleyev</groupId>
+                        <artifactId>jpackage-maven-plugin</artifactId>
+                        <version>1.6.5</version>
+                        <executions>
+                            <execution>
+                                <id>build-installer</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>jpackage</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <name>${jpackage.appName}</name>
+                            <appVersion>${jpackage.appVersion}</appVersion>
+                            <vendor>Bloodfield</vendor>
+                            <input>${jpackage.input}</input>
+                            <destination>${jpackage.dest}</destination>
+                            <mainJar>${jpackage.mainJar}</mainJar>
+                            <mainClass>${jpackage.mainClass}</mainClass>
+                            <type>${jpackage.type}</type>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>jpackage-mac</id>
+            <activation>
+                <os>
+                    <family>mac</family>
+                </os>
+            </activation>
+            <properties>
+                <jpackage.type>DMG</jpackage.type>
+            </properties>
+        </profile>
+        <profile>
+            <id>jpackage-windows</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <properties>
+                <jpackage.type>MSI</jpackage.type>
+            </properties>
+        </profile>
+        <profile>
+            <id>jpackage-linux</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <name>linux</name>
+                </os>
+            </activation>
+            <properties>
+                <jpackage.type>DEB</jpackage.type>
+            </properties>
+        </profile>
+
+        <!--
+            GraalVM native-image build for the headless CLI entry point.
+            Requires GraalVM 21+ on PATH (GRAALVM_HOME or JAVA_HOME pointing at a GraalVM JDK)
+            with `native-image` installed (`gu install native-image` for older distros;
+            bundled with Oracle GraalVM and recent Liberica NIK).
+
+                mvn -Ppackage-graal package -DskipTests
+
+            Produces target/${graal.imageName} (typically `bloodfield-cli`).
+
+            The CLI is intentionally JavaFX-free — JavaFX + native-image is a separate,
+            much harder problem (see `package-gui-native` profile below). The native-image
+            tool runs only on classes reachable from `${graal.mainClass}`, so the JavaFX
+            UI code is excluded automatically by reachability analysis.
+        -->
+        <profile>
+            <id>package-graal</id>
+            <activation>
+                <property>
+                    <name>package-graal</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <version>0.10.3</version>
+                        <extensions>true</extensions>
+                        <executions>
+                            <execution>
+                                <id>build-native</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>compile-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <imageName>${graal.imageName}</imageName>
+                            <mainClass>${graal.mainClass}</mainClass>
+                            <fallback>false</fallback>
+                            <buildArgs>
+                                <buildArg>--no-fallback</buildArg>
+                                <buildArg>-H:+ReportExceptionStackTraces</buildArg>
+                                <buildArg>-H:ConfigurationFileDirectories=${graal.configDir}</buildArg>
+                            </buildArgs>
+                            <metadataRepository>
+                                <enabled>true</enabled>
+                            </metadataRepository>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+            Run the CLI under GraalVM's tracing agent to harvest reflect-config.json,
+            resource-config.json, jni-config.json, proxy-config.json, etc. Output is
+            written to src/main/resources/META-INF/native-image/, where native-image
+            picks it up automatically on the next `package-graal` build.
+
+                mvn -Pcollect-graal-config exec:exec -Dexec.args="<cli args>"
+
+            Re-run for each scenario you want covered (campaign, level, placement, ...);
+            the agent merges configs across runs.
+        -->
+        <profile>
+            <id>collect-graal-config</id>
+            <activation>
+                <property>
+                    <name>collect-graal-config</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.4.1</version>
+                        <configuration>
+                            <executable>java</executable>
+                            <arguments>
+                                <argument>-agentlib:native-image-agent=config-merge-dir=${graal.configDir}</argument>
+                                <argument>-cp</argument>
+                                <classpath/>
+                                <argument>${graal.mainClass}</argument>
+                            </arguments>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+            Headless PNG screenshot generator for README + GitHub Pages.
+            Boots JavaFX in Monocle/Headless mode (no display server needed) and
+            writes representative PNGs into docs/screenshots/.
+
+                mvn -Pscreenshots verify -DskipTests
+        -->
+        <profile>
+            <id>screenshots</id>
+            <dependencies>
+                <!--
+                    PDFSam's community-maintained build of OpenJFX Monocle for
+                    desktop. Provides com.sun.glass.ui.monocle.MonoclePlatformFactory
+                    so JavaFX can boot with no display server (CI / headless).
+                -->
+                <dependency>
+                    <groupId>org.pdfsam</groupId>
+                    <artifactId>javafx-monocle</artifactId>
+                    <version>21</version>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.4.1</version>
+                        <executions>
+                            <execution>
+                                <id>generate-screenshots</id>
+                                <phase>verify</phase>
+                                <goals><goal>java</goal></goals>
+                                <configuration>
+                                    <mainClass>com.github.rzo1.armyclash.tools.ScreenshotGenerator</mainClass>
+                                    <classpathScope>runtime</classpathScope>
+                                    <systemProperties>
+                                        <systemProperty>
+                                            <key>glass.platform</key>
+                                            <value>Monocle</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>monocle.platform</key>
+                                            <value>Headless</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>prism.order</key>
+                                            <value>sw</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>prism.text</key>
+                                            <value>t2k</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>javafx.platform</key>
+                                            <value>monocle</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>java.awt.headless</key>
+                                            <value>true</value>
+                                        </systemProperty>
+                                    </systemProperties>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+            DEFERRED: native build of the JavaFX GUI via Gluon's GluonFX plugin.
+            JavaFX + native-image needs Gluon's Substrate, platform toolchains
+            (Xcode on macOS, MSVC on Windows, GCC + dev libs on Linux), and
+            extensive reachability metadata. Treat as a future task.
+
+                mvn -Ppackage-gui-native gluonfx:build gluonfx:nativerun
+
+            Activate manually; not part of the default build.
+        -->
+        <profile>
+            <id>package-gui-native</id>
+            <activation>
+                <property>
+                    <name>package-gui-native</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.gluonhq</groupId>
+                        <artifactId>gluonfx-maven-plugin</artifactId>
+                        <version>1.0.27</version>
+                        <configuration>
+                            <mainClass>com.github.rzo1.armyclash.ui.Launcher</mainClass>
+                            <nativeImageArgs>
+                                <arg>--no-fallback</arg>
+                                <arg>-H:+ReportExceptionStackTraces</arg>
+                            </nativeImageArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
 
@@ -115,7 +419,7 @@
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>com.example.armyclash.ui.GameApp</mainClass>
+                    <mainClass>com.github.rzo1.armyclash.ui.GameApp</mainClass>
                 </configuration>
             </plugin>
             <plugin>
@@ -134,7 +438,7 @@
                             <shadedClassifierName>all</shadedClassifierName>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.example.armyclash.ui.Launcher</mainClass>
+                                    <mainClass>com.github.rzo1.armyclash.ui.Launcher</mainClass>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>

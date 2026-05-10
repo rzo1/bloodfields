@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            os_label: macos
+            installer_glob: 'target/installers/*.dmg'
+            cli_path: 'target/bloodfield-cli'
+          - os: windows-latest
+            os_label: windows
+            installer_glob: 'target/installers/*.msi'
+            cli_path: 'target/bloodfield-cli.exe'
+          - os: ubuntu-latest
+            os_label: linux
+            installer_glob: 'target/installers/*.deb'
+            cli_path: 'target/bloodfield-cli'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up GraalVM 21
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          native-image-job-reports: 'true'
+
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Build jpackage installer
+        shell: bash
+        run: mvn -B -Ppackage-native package -DskipTests
+
+      - name: Build GraalVM native CLI
+        shell: bash
+        run: mvn -B -Ppackage-graal package -DskipTests
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bloodfield-installer-${{ matrix.os_label }}
+          path: ${{ matrix.installer_glob }}
+          if-no-files-found: error
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bloodfield-cli-${{ matrix.os_label }}
+          path: ${{ matrix.cli_path }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact tree
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.deb' -o -name 'bloodfield-cli' -o -name 'bloodfield-cli.exe' \) -print0 \
+            | while IFS= read -r -d '' f; do
+                base=$(basename "$f")
+                parent=$(basename "$(dirname "$f")")
+                cp "$f" "release/${parent}-${base}"
+              done
+          ls -la release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

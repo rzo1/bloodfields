@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bloodfield — armies clash. bones break. crows feast.</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <pre class="ascii" aria-hidden="true">
+   ▓▓▒▒░  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄  ░▒▒▓▓
+  ▓▓▒░    ____  _                 _  __ _      _     _   ░▒▓▓
+ ▓▒░▒    | __ )| | ___   ___   __| |/ _(_) ___| | __| |   ▒░▓
+ ▒░     |  _ \| |/ _ \ / _ \ / _` | |_| |/ _ \ |/ _` |     ░▒
+ ░      | |_) | | (_) | (_) | (_| |  _| |  __/ | (_| |      ░
+        |____/|_|\___/ \___/ \__,_|_| |_|\___|_|\__,_|
+   ░▒▓                                                      ▓▒░
+   ▓▒░     armies clash.   bones break.   crows feast.     ░▒▓
+   ▒░▓                                                      ▓░▒
+   ░▓▒  †   †   †   ▓▒░  ▒▓░  ░▓▒  ░▒▓   †   †   †      ▒▓░
+       ╱│╲ ╱│╲ ╱│╲                              ╱│╲ ╱│╲ ╱│╲
+        │   │   │     ▓▒░ blood-soil ░▒▓        │   │   │
+       ╱ ╲ ╱ ╲ ╱ ╲                              ╱ ╲ ╱ ╲ ╱ ╲
+   ▓▓▒▒░░  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  ░░▒▒▓▓
+    </pre>
+    <p class="tagline">armies clash. bones break. crows feast.</p>
+  </header>
+
+  <section>
+    <h2>Screenshots</h2>
+    <div class="screenshots">
+      <figure>
+        <a href="screenshots/menu.png"><img src="screenshots/menu.png" alt="Bloodfield main menu" loading="lazy"></a>
+        <figcaption>Main menu — Campaign / Skirmish / Versus, with level codes.</figcaption>
+      </figure>
+      <figure>
+        <a href="screenshots/deployment.png"><img src="screenshots/deployment.png" alt="Deployment phase on Mage Cabal" loading="lazy"></a>
+        <figcaption>Deployment phase. Place units in the green zone before the carnage starts.</figcaption>
+      </figure>
+      <figure>
+        <a href="screenshots/battle.png"><img src="screenshots/battle.png" alt="Cavalry charge in mid-battle" loading="lazy"></a>
+        <figcaption>Battle in progress. Cavalry charging across a contested river.</figcaption>
+      </figure>
+      <figure>
+        <a href="screenshots/fortress.png"><img src="screenshots/fortress.png" alt="Fortress wall siege with garrisoned archers" loading="lazy"></a>
+        <figcaption>Fortress Wall map. Towers are garrisoned, gates auto-open, blood pools on the killing ground.</figcaption>
+      </figure>
+      <figure class="wide">
+        <a href="screenshots/finale.png"><img src="screenshots/finale.png" alt="Final Fuckery — gore-heavy late battle under a red sky" loading="lazy"></a>
+        <figcaption>Final Fuckery. Late-battle vignette: corpses pile up, vultures arrive, the sun gives up.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>Download</h2>
+    <p>Pick your platform. Each release ships a <strong>GUI installer</strong>
+      (bundled JRE, no Java needed) and a <strong>headless CLI native binary</strong>
+      (compiled with GraalVM, no JVM, boots in milliseconds).</p>
+    <div id="downloads">
+      <p class="spinner">Fetching latest release&hellip;</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Build from source</h2>
+    <p>Java 21 required. Maven only — no Gradle.</p>
+    <pre class="shell"><code>git clone https://github.com/rzo1/bloodfields.git
+cd bloodfields
+
+# Run from source
+mvn javafx:run
+
+# Fat jar
+mvn -DskipTests package
+java -jar target/bloodfield-0.1.0-SNAPSHOT-all.jar
+
+# Native installer (jpackage, bundles a JRE)
+mvn -Ppackage-native package -DskipTests
+
+# Native CLI binary (requires GraalVM 21+)
+mvn -Ppackage-graal package -DskipTests
+</code></pre>
+  </section>
+
+  <footer>
+    <p>Releases are built automatically by GitHub Actions on every <code>v*</code> tag push.</p>
+    <p><a href="https://github.com/rzo1/bloodfields">github.com/rzo1/bloodfields</a></p>
+  </footer>
+</main>
+
+<script>
+(function () {
+  // Hardcoded; if the repo moves, edit OWNER/REPO and redeploy.
+  var OWNER = 'rzo1';
+  var REPO = 'bloodfields';
+  var API_URL = 'https://api.github.com/repos/' + OWNER + '/' + REPO + '/releases/latest';
+  var FALLBACK_URL = 'https://github.com/' + OWNER + '/' + REPO + '/releases/latest';
+
+  // Platform classification keyed off asset filename suffixes / patterns
+  // produced by .github/workflows/release.yml.
+  var PLATFORMS = [
+    {
+      key: 'macos',
+      label: 'macOS',
+      icon: '🍏', // 🍏
+      installer: { match: /\.dmg$/i, label: 'Installer (.dmg)', hint: 'Bundled JRE. Right-click → Open on first launch (unsigned).' },
+      cli: { match: /(^|[^.])bloodfield-cli$/i, fileMatch: /macos/i, label: 'CLI binary', hint: 'arm64. chmod +x then run.' }
+    },
+    {
+      key: 'windows',
+      label: 'Windows',
+      icon: '🪟', // 🪟
+      installer: { match: /\.msi$/i, label: 'Installer (.msi)', hint: 'Bundled JRE. SmartScreen will warn (unsigned).' },
+      cli: { match: /\.exe$/i, label: 'CLI binary (.exe)', hint: 'x86_64.' }
+    },
+    {
+      key: 'linux',
+      label: 'Linux',
+      icon: '🐧', // 🐧
+      installer: { match: /\.deb$/i, label: 'Installer (.deb)', hint: 'Debian/Ubuntu. sudo apt install ./pkg.deb' },
+      cli: { match: /(^|[^.])bloodfield-cli$/i, fileMatch: /linux/i, label: 'CLI binary', hint: 'x86_64. chmod +x then run.' }
+    }
+  ];
+
+  function el(tag, attrs, children) {
+    var node = document.createElement(tag);
+    if (attrs) {
+      for (var k in attrs) {
+        if (k === 'className') node.className = attrs[k];
+        else if (k === 'text') node.textContent = attrs[k];
+        else node.setAttribute(k, attrs[k]);
+      }
+    }
+    (children || []).forEach(function (c) { node.appendChild(c); });
+    return node;
+  }
+
+  function findAsset(assets, spec) {
+    return assets.find(function (a) {
+      if (!spec.match.test(a.name)) return false;
+      if (spec.fileMatch && !spec.fileMatch.test(a.name)) return false;
+      return true;
+    });
+  }
+
+  function renderDownloadButton(asset, label, hint) {
+    var btn = el('a', { className: 'download-btn', href: asset.browser_download_url });
+    btn.appendChild(el('span', { text: label }));
+    var meta = el('small', {});
+    var sizeMb = (asset.size / (1024 * 1024)).toFixed(1);
+    meta.textContent = hint + ' — ' + sizeMb + ' MB';
+    btn.appendChild(meta);
+    return btn;
+  }
+
+  function renderPlatform(platform, assets) {
+    var box = el('div', { className: 'platform' });
+    var heading = el('h3', {});
+    heading.appendChild(el('span', { className: 'icon', text: platform.icon }));
+    heading.appendChild(el('span', { text: platform.label }));
+    box.appendChild(heading);
+
+    var installer = findAsset(assets, platform.installer);
+    var cli = findAsset(assets, platform.cli);
+
+    if (installer) {
+      box.appendChild(renderDownloadButton(installer, platform.installer.label, platform.installer.hint));
+    }
+    if (cli) {
+      box.appendChild(renderDownloadButton(cli, platform.cli.label, platform.cli.hint));
+    }
+    if (!installer && !cli) {
+      box.appendChild(el('p', { className: 'spinner', text: 'No artifacts for this platform in the latest release.' }));
+    }
+    return box;
+  }
+
+  function renderFallback(message) {
+    var container = document.getElementById('downloads');
+    container.innerHTML = '';
+    var notice = el('div', { className: 'notice error', text: message + ' ' });
+    var link = el('a', { href: FALLBACK_URL, text: 'Browse all releases on GitHub →' });
+    notice.appendChild(link);
+    container.appendChild(notice);
+  }
+
+  function renderRelease(release) {
+    var container = document.getElementById('downloads');
+    container.innerHTML = '';
+
+    var header = el('p', {});
+    header.appendChild(el('span', { text: 'Latest release: ' }));
+    var tagLink = el('a', { href: release.html_url, text: release.tag_name });
+    header.appendChild(tagLink);
+    if (release.published_at) {
+      var date = new Date(release.published_at);
+      header.appendChild(el('span', {
+        text: ' — ' + date.toISOString().slice(0, 10),
+        className: 'spinner'
+      }));
+    }
+    container.appendChild(header);
+
+    if (!release.assets || release.assets.length === 0) {
+      var notice = el('div', { className: 'notice', text: 'Release exists but has no attached artifacts yet.' });
+      container.appendChild(notice);
+      return;
+    }
+
+    var grid = el('div', { className: 'platform-grid' });
+    PLATFORMS.forEach(function (p) {
+      grid.appendChild(renderPlatform(p, release.assets));
+    });
+    container.appendChild(grid);
+  }
+
+  fetch(API_URL, { headers: { 'Accept': 'application/vnd.github+json' } })
+    .then(function (resp) {
+      if (resp.status === 404) {
+        renderFallback('No releases published yet.');
+        return null;
+      }
+      if (!resp.ok) {
+        throw new Error('GitHub API returned ' + resp.status);
+      }
+      return resp.json();
+    })
+    .then(function (release) {
+      if (release) renderRelease(release);
+    })
+    .catch(function (err) {
+      renderFallback('Could not fetch the latest release (' + err.message + ').');
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,206 @@
+/* Bloodfield — dark gore theme. Loaded into the Scene from Theme.applyStylesheet. */
+
+.root {
+    -fx-base: #1a1310;
+    -fx-background: #100806;
+    -fx-control-inner-background: #1a1310;
+    -fx-focus-color: #c8332e;
+    -fx-faint-focus-color: rgba(200, 51, 46, 0.25);
+    -fx-text-fill: #e8d8c8;
+    -fx-font-family: 'Georgia', 'Serif';
+}
+
+.gore-button,
+.button {
+    -fx-background-color: linear-gradient(to bottom, #2a2018, #1a1310);
+    -fx-text-fill: #e8d8c8;
+    -fx-border-color: #5a1a14;
+    -fx-border-width: 1px;
+    -fx-border-radius: 2px;
+    -fx-background-radius: 2px;
+    -fx-padding: 6 12 6 12;
+    -fx-font-family: 'Georgia', 'Serif';
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.6), 3, 0.3, 1, 1);
+}
+
+.gore-button:hover,
+.button:hover {
+    -fx-background-color: linear-gradient(to bottom, #3a2820, #2a1815);
+    -fx-border-color: #c8332e;
+    -fx-text-fill: #ffd6c8;
+}
+
+.gore-button:pressed,
+.button:pressed {
+    -fx-background-color: linear-gradient(to bottom, #1a1310, #0a0807);
+    -fx-border-color: #c8332e;
+}
+
+.gore-button:disabled,
+.button:disabled {
+    -fx-opacity: 0.5;
+    -fx-cursor: default;
+}
+
+.toggle-button {
+    -fx-background-color: linear-gradient(to bottom, #2a2018, #1a1310);
+    -fx-text-fill: #e8d8c8;
+    -fx-border-color: #5a1a14;
+    -fx-border-width: 1px;
+    -fx-border-radius: 2px;
+    -fx-background-radius: 2px;
+    -fx-padding: 5 10 5 10;
+    -fx-font-family: 'Georgia', 'Serif';
+    -fx-cursor: hand;
+}
+
+.toggle-button:hover {
+    -fx-background-color: linear-gradient(to bottom, #3a2820, #2a1815);
+    -fx-border-color: #c8332e;
+}
+
+.toggle-button:selected {
+    -fx-background-color: linear-gradient(to bottom, #5a1a14, #3a0e0a);
+    -fx-border-color: #c8332e;
+    -fx-text-fill: #ffd6c8;
+    -fx-font-weight: bold;
+}
+
+.toggle-button:disabled {
+    -fx-opacity: 0.45;
+    -fx-cursor: default;
+}
+
+.label {
+    -fx-text-fill: #e8d8c8;
+    -fx-font-family: 'Georgia', 'Serif';
+}
+
+.gore-title {
+    -fx-text-fill: #e8d8c8;
+    -fx-font-family: 'Georgia', 'Serif';
+    -fx-font-weight: bold;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.6), 4, 0.4, 1, 1);
+}
+
+.gore-body {
+    -fx-text-fill: #e8d8c8;
+    -fx-font-family: 'Georgia', 'Serif';
+}
+
+.gore-dim {
+    -fx-text-fill: #7a6c5c;
+    -fx-font-family: 'Georgia', 'Serif';
+    -fx-font-style: italic;
+}
+
+.gore-accent {
+    -fx-text-fill: #c8332e;
+    -fx-font-family: 'Georgia', 'Serif';
+    -fx-font-weight: bold;
+}
+
+.gore-panel {
+    -fx-background-color: rgba(20, 18, 16, 0.92);
+    -fx-border-color: #5a1a14;
+    -fx-border-width: 0 1 0 0;
+}
+
+.text-field {
+    -fx-background-color: #1a1310;
+    -fx-text-fill: #e8d8c8;
+    -fx-border-color: #5a1a14;
+    -fx-border-width: 1px;
+    -fx-border-radius: 2px;
+    -fx-background-radius: 2px;
+    -fx-prompt-text-fill: #7a6c5c;
+    -fx-font-family: 'Georgia', 'Serif';
+}
+
+.text-field:focused {
+    -fx-border-color: #c8332e;
+}
+
+.check-box {
+    -fx-text-fill: #e8d8c8;
+    -fx-font-family: 'Georgia', 'Serif';
+}
+
+.check-box .box {
+    -fx-background-color: #1a1310;
+    -fx-border-color: #5a1a14;
+    -fx-border-width: 1px;
+}
+
+.check-box:selected .mark {
+    -fx-background-color: #c8332e;
+}
+
+.combo-box {
+    -fx-background-color: linear-gradient(to bottom, #2a2018, #1a1310);
+    -fx-border-color: #5a1a14;
+    -fx-border-width: 1px;
+    -fx-background-radius: 2px;
+    -fx-border-radius: 2px;
+}
+
+.combo-box .list-cell {
+    -fx-text-fill: #e8d8c8;
+    -fx-background-color: transparent;
+    -fx-font-family: 'Georgia', 'Serif';
+}
+
+.combo-box-popup .list-view {
+    -fx-background-color: #1a1310;
+    -fx-border-color: #5a1a14;
+}
+
+.combo-box-popup .list-cell:hover,
+.combo-box-popup .list-cell:filled:selected {
+    -fx-background-color: #5a1a14;
+    -fx-text-fill: #ffd6c8;
+}
+
+.slider .track {
+    -fx-background-color: #2a1810;
+    -fx-background-radius: 2px;
+}
+
+.slider .thumb {
+    -fx-background-color: #c8332e;
+    -fx-background-insets: 0;
+    -fx-background-radius: 2px;
+}
+
+.slider .axis {
+    -fx-tick-label-fill: #7a6c5c;
+}
+
+.scroll-pane {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+}
+
+.scroll-pane > .viewport {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar {
+    -fx-background-color: rgba(20, 14, 12, 0.6);
+}
+
+.scroll-bar .thumb {
+    -fx-background-color: #5a1a14;
+    -fx-background-radius: 2px;
+}
+
+.scroll-bar .thumb:hover {
+    -fx-background-color: #c8332e;
+}
+
+.separator .line {
+    -fx-border-color: #3a2520;
+    -fx-border-width: 0 0 1 0;
+}
