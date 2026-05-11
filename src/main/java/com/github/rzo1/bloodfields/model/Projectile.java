@@ -10,11 +10,19 @@ public final class Projectile {
     public Unit target;
     public final double splashRadius;
     public final UnitType attackerType;
+    public final Unit originator;
     public boolean alive;
 
     public Projectile(double x, double y, double vx, double vy,
                       Faction owner, double damage, Unit target,
                       double splashRadius, UnitType attackerType) {
+        this(x, y, vx, vy, owner, damage, target, splashRadius, attackerType, null);
+    }
+
+    public Projectile(double x, double y, double vx, double vy,
+                      Faction owner, double damage, Unit target,
+                      double splashRadius, UnitType attackerType,
+                      Unit originator) {
         this.x = x;
         this.y = y;
         this.vx = vx;
@@ -24,6 +32,7 @@ public final class Projectile {
         this.target = target;
         this.splashRadius = splashRadius;
         this.attackerType = attackerType;
+        this.originator = originator;
         this.alive = true;
     }
 }

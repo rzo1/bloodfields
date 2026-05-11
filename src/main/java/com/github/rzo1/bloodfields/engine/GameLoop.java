@@ -57,6 +57,7 @@ public final class GameLoop {
         integrateUnits(state.blue, dtSeconds);
 
         if (state.fireField != null && state.world != null) {
+            state.fireField.setBattleStats(state.battleStats);
             igniteFireTrails(state.red, state.world.tileSize);
             igniteFireTrails(state.blue, state.world.tileSize);
             state.fireField.update(dtSeconds, state.red.units(), state.blue.units(),
@@ -89,6 +90,9 @@ public final class GameLoop {
                 }
                 if (dmg > 0.0) {
                     u.takeDamage(dmg);
+                    if (state.battleStats != null) {
+                        state.battleStats.recordDamage(u.burningAttacker, u, dmg);
+                    }
                 }
             }
         }
@@ -100,7 +104,9 @@ public final class GameLoop {
             if (!u.isAlive()) continue;
             if (u.burningSeconds <= 0.0) continue;
             if (u.type.flying()) continue;
-            state.fireField.igniteAt(u.x, u.y, tileSize);
+            // Trail tiles are credited to whoever set u on fire in the first
+            // place (the MAGE/DRAGON whose projectile applied the burn).
+            state.fireField.igniteAt(u.x, u.y, tileSize, u.burningAttacker);
         }
     }
 
@@ -251,8 +257,11 @@ public final class GameLoop {
             if (blocker != null && blocker.faction != p.owner) {
                 double base = p.damage * DamageModel.damageMultiplier(p.attackerType, blocker.type);
                 double dealt = HeroAura.modifyIncomingDamage(state, blocker, base);
-                applyDamageRespectingGarrison(blocker, dealt);
-                applyBurningFromAttacker(blocker, p.attackerType);
+                double applied = applyDamageRespectingGarrison(blocker, dealt);
+                if (state.battleStats != null) {
+                    state.battleStats.recordDamage(p.originator, blocker, applied);
+                }
+                applyBurningFromAttacker(blocker, p.attackerType, p.originator);
             }
             return;
         }
@@ -262,12 +271,21 @@ public final class GameLoop {
             if (e.faction == p.owner) continue;
             double base = p.damage * DamageModel.damageMultiplier(p.attackerType, e.type);
             double dealt = HeroAura.modifyIncomingDamage(state, e, base);
-            applyDamageRespectingGarrison(e, dealt);
-            applyBurningFromAttacker(e, p.attackerType);
+            double applied = applyDamageRespectingGarrison(e, dealt);
+            if (state.battleStats != null) {
+                state.battleStats.recordDamage(p.originator, e, applied);
+            }
+            applyBurningFromAttacker(e, p.attackerType, p.originator);
         }
     }
 
     private static void applyBurningFromAttacker(Unit target, com.github.rzo1.bloodfields.model.UnitType attackerType) {
+        applyBurningFromAttacker(target, attackerType, null);
+    }
+
+    private static void applyBurningFromAttacker(Unit target,
+                                                 com.github.rzo1.bloodfields.model.UnitType attackerType,
+                                                 Unit attacker) {
         if (target == null || attackerType == null || !target.isAlive()) return;
         double duration;
         double dps;
@@ -286,18 +304,22 @@ public final class GameLoop {
         if (dps > target.burningDamagePerSec) {
             target.burningDamagePerSec = dps;
         }
+        if (attacker != null) {
+            target.burningAttacker = attacker;
+        }
     }
 
-    private void applyDamageRespectingGarrison(Unit u, double amount) {
-        if (u == null || amount <= 0.0) return;
+    private double applyDamageRespectingGarrison(Unit u, double amount) {
+        if (u == null || amount <= 0.0) return 0.0;
         if (state.structures != null) {
             double adjusted = state.structures.rangedDamageOnGarrisonedUnit(u, amount);
             if (adjusted >= 0.0) {
                 u.takeDamage(adjusted);
-                return;
+                return adjusted;
             }
         }
         u.takeDamage(amount);
+        return amount;
     }
 
     private void pruneDead(Army army) {

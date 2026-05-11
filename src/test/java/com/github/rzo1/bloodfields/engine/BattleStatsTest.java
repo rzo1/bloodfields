@@ -2,15 +2,21 @@ package com.github.rzo1.bloodfields.engine;
 
 import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.Faction;
+import com.github.rzo1.bloodfields.model.Projectile;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitState;
 import com.github.rzo1.bloodfields.model.UnitType;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BattleStatsTest {
 
@@ -190,6 +196,92 @@ class BattleStatsTest {
         assertEquals(0.0, s.biggestHit(Faction.RED));
         assertEquals(0L, s.lastFallTick(Faction.RED));
         assertEquals(0L, s.lastFallTick(Faction.BLUE));
+    }
+
+    @Test
+    void projectileKillCreditsAttackerFaction() {
+        // Wire a minimal GameLoop so applyProjectileImpact feeds BattleStats.
+        World world = World.grass(800.0, 600.0, 32.0);
+        Army red = new Army(Faction.RED, 10);
+        Army blue = new Army(Faction.BLUE, 10);
+        SpatialHashGrid grid = new SpatialHashGrid(800.0, 600.0, 64.0);
+        GameState s = new GameState(world, red, blue, grid);
+        // Disable fire field so trail/fire stats don't pollute the assertion.
+        s.fireField = null;
+
+        Unit attacker = new Unit(1L, UnitType.ARCHER, Faction.RED, 100.0, 200.0);
+        red.add(attacker);
+        Unit victim = new Unit(2L, UnitType.INFANTRY, Faction.BLUE, 200.0, 200.0);
+        // Make the victim one-shottable so the projectile drops it.
+        victim.hp = 1.0;
+        blue.add(victim);
+
+        Projectile p = new Projectile(199.0, 200.0, 0.0, 0.0,
+                Faction.RED, 50.0, victim, 0.0, UnitType.ARCHER, attacker);
+        s.projectiles.add(p);
+
+        GameLoop loop = new GameLoop(s, (u, st, dt) -> {});
+        loop.step(1.0 / 60.0);
+
+        BattleStats.Summary sum = s.battleStats.summary();
+        assertEquals(1, sum.kills(Faction.RED),
+                "ranged projectile kill should credit RED");
+        assertEquals(0, sum.kills(Faction.BLUE));
+        assertTrue(sum.damageDealt(Faction.RED) > 0.0,
+                "projectile damage should be credited to RED's damageDealt");
+        assertFalse(victim.isAlive());
+    }
+
+    @Test
+    void burningKillCreditsBurningAttacker() {
+        World world = World.grass(800.0, 600.0, 32.0);
+        Army red = new Army(Faction.RED, 10);
+        Army blue = new Army(Faction.BLUE, 10);
+        SpatialHashGrid grid = new SpatialHashGrid(800.0, 600.0, 64.0);
+        GameState s = new GameState(world, red, blue, grid);
+        // Disable fire field so the burning-tile trail doesn't ALSO credit the
+        // kill — we want to assert that the per-tick DoT path credits it.
+        s.fireField = null;
+
+        Unit mage = new Unit(1L, UnitType.MAGE, Faction.RED, 100.0, 100.0);
+        red.add(mage);
+        Unit victim = new Unit(2L, UnitType.INFANTRY, Faction.BLUE, 200.0, 200.0);
+        victim.hp = 5.0;
+        victim.burningSeconds = 4.0;
+        victim.burningDamagePerSec = 6.0;
+        victim.burningAttacker = mage;
+        blue.add(victim);
+
+        GameLoop loop = new GameLoop(s, (u, st, dt) -> {});
+        // 6 dps * 1.0s = 6 damage, drops the 5hp victim. step(1.0) is large
+        // but applyBurning is the first thing each step does.
+        loop.step(1.0);
+
+        BattleStats.Summary sum = s.battleStats.summary();
+        assertEquals(1, sum.kills(Faction.RED),
+                "burning DoT kill should credit RED (the MAGE that lit them up)");
+        assertEquals(0, sum.kills(Faction.BLUE));
+        assertTrue(sum.damageDealt(Faction.RED) > 0.0);
+        assertFalse(victim.isAlive());
+    }
+
+    @Test
+    void fireFieldDamageCreditedToIgniter() {
+        // FireField.applyDamageOnFire should credit damage to the unit that
+        // ignited the tile, not leak it as uncredited environmental damage.
+        FireField field = new FireField();
+        BattleStats stats = new BattleStats();
+        field.setBattleStats(stats);
+        Unit igniter = unit(1L, UnitType.DRAGON, Faction.RED);
+        field.igniteAt(40.0, 40.0, 32.0, igniter);
+
+        Unit victim = new Unit(2L, UnitType.INFANTRY, Faction.BLUE, 40.0, 40.0);
+        field.update(1.0, List.of(victim), Collections.emptyList(), 32.0);
+
+        BattleStats.Summary sum = stats.summary();
+        assertEquals(FireField.FIRE_DAMAGE_PER_SEC, sum.damageDealt(Faction.RED), 1.0e-6,
+                "fire-field damage should credit the ignite source's faction");
+        assertEquals(FireField.FIRE_DAMAGE_PER_SEC, sum.damageReceived(Faction.BLUE), 1.0e-6);
     }
 
     @Test

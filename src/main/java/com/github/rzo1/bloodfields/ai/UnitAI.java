@@ -414,6 +414,9 @@ public final class UnitAI implements UnitUpdater {
             for (Unit victim : hits) {
                 if (victim == null || !victim.isAlive()) continue;
                 victim.takeDamage(dmg);
+                if (state.battleStats != null) {
+                    state.battleStats.recordDamage(u, victim, dmg);
+                }
             }
         }
         corpses.removeCorpse(target);
@@ -460,7 +463,8 @@ public final class UnitAI implements UnitUpdater {
                 boosted,
                 u.target,
                 u.type.splashRadius(),
-                u.type));
+                u.type,
+                u));
     }
 
     private void updateHealer(Unit u, GameState state, double dt) {

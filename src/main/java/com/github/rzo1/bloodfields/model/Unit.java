@@ -20,6 +20,7 @@ public final class Unit {
     public int veteranRank;
     public double burningSeconds;
     public double burningDamagePerSec;
+    public Unit burningAttacker;
 
     public Unit(long id, UnitType type, Faction faction, double x, double y) {
         this(id, type, faction, x, y, 1.0, 0);

@@ -15,6 +15,15 @@ public final class FireField {
 
     private final Map<Long, Double> remaining = new HashMap<>();
     private final Map<Long, Boolean> scorched = new HashMap<>();
+    // Attacker attribution per active fire tile. Used by GameLoop to credit
+    // damage/kills via BattleStats when a unit standing on a burning tile
+    // takes fire damage. A null entry (or absence) means the ignition source
+    // is unattributed (e.g. a tile ignited before the attacker existed, or
+    // an environment-only ignite); in that case fire damage is still applied
+    // and is counted as damageReceived, but with no damageDealt credit and
+    // no kill credit on the dealing side.
+    private final Map<Long, Unit> igniterByTile = new HashMap<>();
+    private BattleStats battleStats;
 
     public static long key(int col, int row) {
         return ((long) col << 32) | (row & 0xffffffffL);
@@ -29,6 +38,10 @@ public final class FireField {
     }
 
     public void igniteAt(double x, double y, double tileSize) {
+        igniteAt(x, y, tileSize, null);
+    }
+
+    public void igniteAt(double x, double y, double tileSize, Unit igniter) {
         if (tileSize <= 0.0) {
             return;
         }
@@ -36,6 +49,16 @@ public final class FireField {
         int row = (int) Math.floor(y / tileSize);
         long k = key(col, row);
         remaining.put(k, FIRE_LIFETIME_SECONDS);
+        // Latch the most recent igniter — re-ignites by a different unit
+        // overwrite the attribution. We keep the entry even if the igniter
+        // later dies; BattleStats.recordDamage only reads faction from it.
+        if (igniter != null) {
+            igniterByTile.put(k, igniter);
+        }
+    }
+
+    public void setBattleStats(BattleStats stats) {
+        this.battleStats = stats;
     }
 
     public boolean isBurningAt(double x, double y, double tileSize) {
@@ -71,6 +94,7 @@ public final class FireField {
     public void clear() {
         remaining.clear();
         scorched.clear();
+        igniterByTile.clear();
     }
 
     public void update(double dt, Iterable<Unit> reds, Iterable<Unit> blues, double tileSize) {
@@ -84,6 +108,7 @@ public final class FireField {
                 double next = e.getValue() - dt;
                 if (next <= 0.0) {
                     scorched.put(e.getKey(), Boolean.TRUE);
+                    igniterByTile.remove(e.getKey());
                     it.remove();
                 } else {
                     e.setValue(next);
@@ -106,8 +131,12 @@ public final class FireField {
             if (u.type.flying()) continue;
             int col = (int) Math.floor(u.x * invTile);
             int row = (int) Math.floor(u.y * invTile);
-            if (remaining.containsKey(key(col, row))) {
+            long k = key(col, row);
+            if (remaining.containsKey(k)) {
                 u.takeDamage(damage);
+                if (battleStats != null) {
+                    battleStats.recordDamage(igniterByTile.get(k), u, damage);
+                }
             }
         }
     }
