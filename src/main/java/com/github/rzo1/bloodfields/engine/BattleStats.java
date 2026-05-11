@@ -6,7 +6,9 @@ import com.github.rzo1.bloodfields.model.Unit;
 
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Per-faction battle statistics: kills, deaths, total damage, biggest hit, and
@@ -31,6 +33,9 @@ public final class BattleStats {
     private final Map<Faction, Double> damageReceived = new EnumMap<>(Faction.class);
     private final Map<Faction, Double> biggestHit = new EnumMap<>(Faction.class);
     private final Map<Faction, Long> lastFallTick = new EnumMap<>(Faction.class);
+    // Set of victim unit IDs we've already credited a kill for, so a unit that
+    // takes multiple lethal-grade hits doesn't get counted twice.
+    private final Set<Long> creditedKills = new HashSet<>();
 
     public BattleStats() {
         reset();
@@ -45,6 +50,7 @@ public final class BattleStats {
             biggestHit.put(f, 0.0);
             lastFallTick.put(f, 0L);
         }
+        creditedKills.clear();
     }
 
     public void recordDamage(Unit attacker, Unit victim, double amount) {
@@ -54,6 +60,16 @@ public final class BattleStats {
             damageDealt.merge(af, amount, Double::sum);
             if (amount > biggestHit.getOrDefault(af, 0.0)) {
                 biggestHit.put(af, amount);
+            }
+            // Lethal-blow detection: callers invoke recordDamage AFTER
+            // takeDamage, so victim.hp reflects the post-damage value. If this
+            // attributable damage event dropped the victim, credit the kill —
+            // but only once per victim (creditedKills guards against multiple
+            // overkill hits double-counting).
+            if (victim.hp <= 0.0 && victim.faction != null
+                    && af != victim.faction
+                    && creditedKills.add(victim.id)) {
+                kills.merge(af, 1, Integer::sum);
             }
         }
         if (victim.faction != null) {

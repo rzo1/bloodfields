@@ -31,7 +31,7 @@ public final class StatsScreen {
             "Deaths",
             "Damage dealt",
             "Biggest hit",
-            "Last to fall (t)"
+            "Last alive (s)"
     };
 
     public void render(GraphicsContext g, double w, double h,
@@ -111,8 +111,8 @@ public final class StatsScreen {
             g.setFont(value);
             g.setFill(WHITE);
             g.setTextAlign(TextAlignment.CENTER);
-            g.fillText(valueFor(i, Faction.RED, summary), leftCol, y);
-            g.fillText(valueFor(i, Faction.BLUE, summary), rightCol, y);
+            g.fillText(valueFor(i, Faction.RED, summary, secondsPerTick), leftCol, y);
+            g.fillText(valueFor(i, Faction.BLUE, summary, secondsPerTick), rightCol, y);
         }
 
         Font hint = Font.font("Georgia", 12);
@@ -124,13 +124,13 @@ public final class StatsScreen {
         g.restore();
     }
 
-    private static String valueFor(int row, Faction f, BattleStats.Summary s) {
+    private static String valueFor(int row, Faction f, BattleStats.Summary s, double secondsPerTick) {
         switch (row) {
             case 0: return Integer.toString(s.kills(f));
             case 1: return Integer.toString(s.deaths(f));
             case 2: return formatDouble(s.damageDealt(f));
             case 3: return formatDouble(s.biggestHit(f));
-            case 4: return Long.toString(s.lastFallTick(f));
+            case 4: return String.format("%.1f", Math.max(0.0, s.lastFallTick(f) * secondsPerTick));
             default: return "?";
         }
     }
