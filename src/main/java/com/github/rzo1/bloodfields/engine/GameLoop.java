@@ -18,6 +18,7 @@ public final class GameLoop {
     private final GameState state;
     private final UnitUpdater updater;
     private final ArrayList<Unit> projectileNearbyBuf = new ArrayList<>();
+    private final ArrayList<Unit> updaterSnapshotBuf = new ArrayList<>();
 
     public GameLoop(GameState state, UnitUpdater updater) {
         if (state == null) throw new IllegalArgumentException("state");
@@ -113,8 +114,13 @@ public final class GameLoop {
     }
 
     private void runUpdaters(Army army, double dt) {
-        List<Unit> snapshot = new ArrayList<>(army.units());
-        for (Unit u : snapshot) {
+        // Snapshot the unit list so updater.update(...) can safely spawn new
+        // units (e.g. necromancy revives) without CME. Buffer is reused across
+        // both armies' calls within a single step() — they never overlap.
+        updaterSnapshotBuf.clear();
+        updaterSnapshotBuf.addAll(army.units());
+        for (int i = 0, n = updaterSnapshotBuf.size(); i < n; i++) {
+            Unit u = updaterSnapshotBuf.get(i);
             if (!u.isAlive()) continue;
             updater.update(u, state, dt);
         }
