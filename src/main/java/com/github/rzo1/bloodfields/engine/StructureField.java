@@ -283,6 +283,35 @@ public final class StructureField {
         return false;
     }
 
+    /**
+     * Among all live, non-open structures that block movement and whose AABB
+     * intersects the line from (x0,y0) to (x1,y1), return the one whose centre
+     * is closest to (x0,y0). Used by melee siege AI to pick the wall they need
+     * to break down. Returns null if no structure blocks the line.
+     */
+    public Structure firstBlockingStructureOnLine(double x0, double y0,
+                                                  double x1, double y1) {
+        Structure best = null;
+        double bestDistSq = Double.POSITIVE_INFINITY;
+        for (Structure s : structures) {
+            if (isDestroyed(s)) continue;
+            if (!s.type().blocksWhenAlive()) continue;
+            if (isOpen(s)) continue;
+            if (!segmentIntersectsRect(x0, y0, x1, y1,
+                    s.x(), s.y(), s.x() + s.width(), s.y() + s.height())) continue;
+            double cx = s.x() + s.width() / 2.0;
+            double cy = s.y() + s.height() / 2.0;
+            double dx = cx - x0;
+            double dy = cy - y0;
+            double d2 = dx * dx + dy * dy;
+            if (d2 < bestDistSq) {
+                bestDistSq = d2;
+                best = s;
+            }
+        }
+        return best;
+    }
+
     public void damage(Structure s, double amount) {
         if (s == null || amount <= 0.0) return;
         Double current = hpById.get(s.id());

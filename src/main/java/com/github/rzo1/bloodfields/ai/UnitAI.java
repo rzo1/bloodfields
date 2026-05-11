@@ -3,8 +3,10 @@ package com.github.rzo1.bloodfields.ai;
 import com.github.rzo1.bloodfields.engine.Corpse;
 import com.github.rzo1.bloodfields.engine.CorpseField;
 import com.github.rzo1.bloodfields.engine.GameState;
+import com.github.rzo1.bloodfields.engine.Structure;
 import com.github.rzo1.bloodfields.engine.StructureHelper;
 import com.github.rzo1.bloodfields.engine.UnitUpdater;
+import com.github.rzo1.bloodfields.engine.WallHit;
 import com.github.rzo1.bloodfields.engine.World;
 import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.DamageModel;
@@ -36,6 +38,7 @@ public final class UnitAI implements UnitUpdater {
     private final Map<Long, Double> simClock = new HashMap<>();
     private final Map<Long, double[]> lastSeenPos = new HashMap<>();
     private final Map<Long, Double> stuckSeconds = new HashMap<>();
+    private final Map<Long, Structure> siegeTarget = new HashMap<>();
     private final MoraleSystem morale = new MoraleSystem();
     private Random pokeRng = new Random(0xC0FFEEL);
     private double simTime;
@@ -60,6 +63,7 @@ public final class UnitAI implements UnitUpdater {
             paths.remove(u);
             lastSeenPos.remove(u.id);
             stuckSeconds.remove(u.id);
+            siegeTarget.remove(u.id);
             morale.clear(u);
             return;
         }
@@ -188,6 +192,34 @@ public final class UnitAI implements UnitUpdater {
             }
         }
 
+        // Siege decision. If a melee non-flying unit's enemy is unreachable
+        // (line blocked AND A* could find no way around) and there's an HP
+        // structure on the line of sight, switch to "break that wall down"
+        // mode. Once it breaks (or a gate auto-opens), the normal pathfind
+        // succeeds on the next replan and pursuit resumes.
+        boolean canSiege = !u.type.flying() && !u.type.ranged() && state.structures != null;
+        if (canSiege && blocked && path == null) {
+            Structure siege = siegeTarget.get(u.id);
+            if (siege != null
+                    && (state.structures.hpOf(siege) <= 0.0
+                        || state.structures.isOpen(siege))) {
+                siegeTarget.remove(u.id);
+                siege = null;
+            }
+            if (siege == null) {
+                siege = state.structures.firstBlockingStructureOnLine(u.x, u.y, mx, my);
+                if (siege != null) {
+                    siegeTarget.put(u.id, siege);
+                }
+            }
+            if (siege != null) {
+                handleSiege(u, siege, state);
+                return;
+            }
+        } else {
+            siegeTarget.remove(u.id);
+        }
+
         double seekX;
         double seekY;
         if (path != null && !path.isEmpty()) {
@@ -234,6 +266,47 @@ public final class UnitAI implements UnitUpdater {
             stuckSeconds.put(u.id, 0.0);
         }
 
+        u.state = UnitState.MOVING;
+    }
+
+    private void handleSiege(Unit u, Structure target, GameState state) {
+        double range = StructureHelper.effectiveAttackRange(u, state);
+        double tx = target.x();
+        double ty = target.y();
+        double tw = target.width();
+        double th = target.height();
+        // Point-to-AABB distance from unit to wall.
+        double dx = Math.max(Math.max(tx - u.x, u.x - (tx + tw)), 0.0);
+        double dy = Math.max(Math.max(ty - u.y, u.y - (ty + th)), 0.0);
+        double aabbDist = Math.sqrt(dx * dx + dy * dy);
+
+        if (aabbDist <= range) {
+            Steering.stop(u);
+            u.state = UnitState.ATTACKING;
+            paths.remove(u);
+            if (u.attackCooldownRemaining <= 0.0) {
+                double dmg = HeroAura.modifyOutgoingDamage(state, u, u.type.damage());
+                state.structures.damage(target, dmg);
+                if (state.wallHits != null) {
+                    double hitX = Math.max(tx, Math.min(u.x, tx + tw));
+                    double hitY = Math.max(ty, Math.min(u.y, ty + th));
+                    state.wallHits.add(new WallHit(target, hitX, hitY));
+                }
+                u.attackCooldownRemaining = HeroAura.cooldownAfterStrike(
+                        state, u, u.type.attackCooldownSeconds());
+            }
+            return;
+        }
+
+        double cx = tx + tw / 2.0;
+        double cy = ty + th / 2.0;
+        double moveSpeed = HeroAura.moveSpeedFor(state, u, u.type.speed() * AiTuning.weatherSpeedMult);
+        Steering.seek(u, cx, cy, moveSpeed);
+        if (state.neighborIndex != null) {
+            List<Unit> nearby = state.neighborIndex.neighborsOf(u);
+            Steering.applyAllySeparation(u, nearby,
+                    AiTuning.separationRadius, AiTuning.separationWeight, moveSpeed);
+        }
         u.state = UnitState.MOVING;
     }
 
