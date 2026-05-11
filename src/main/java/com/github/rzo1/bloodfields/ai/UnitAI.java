@@ -161,7 +161,7 @@ public final class UnitAI implements UnitUpdater {
         } else {
             path = paths.get(u);
             if (blocked) {
-                if (shouldReplan(u, path, mx, my, w)) {
+                if (shouldReplan(u, mx, my, w)) {
                     List<double[]> newPath = Pathfinding.findPath(w, state.structures, u.x, u.y, mx, my);
                     if (newPath != null && newPath.isEmpty()) {
                         newPath = null;
@@ -234,8 +234,14 @@ public final class UnitAI implements UnitUpdater {
         u.state = UnitState.MOVING;
     }
 
-    private boolean shouldReplan(Unit u, List<double[]> existingPath, double tx, double ty, World w) {
-        if (existingPath == null || existingPath.isEmpty()) {
+    // Honor nextReplanAt uniformly; only let "never planned" or a moved target
+    // override the throttle. Previously a null/empty existingPath short-circuited
+    // to true, bypassing REPLAN_NO_PATH_INTERVAL_SECONDS and making every blocked
+    // unit run a full A* every tick when its target was enclosed by HP walls
+    // (issue #1, Fortress Wall FPS collapse).
+    private boolean shouldReplan(Unit u, double tx, double ty, World w) {
+        Double scheduled = nextReplanAt.get(u.id);
+        if (scheduled == null) {
             return true;
         }
         double[] last = lastPlannedTarget.get(u.id);
@@ -246,10 +252,6 @@ public final class UnitAI implements UnitUpdater {
             if (Math.max(dxTiles, dyTiles) > REPLAN_TARGET_TILE_DELTA) {
                 return true;
             }
-        }
-        Double scheduled = nextReplanAt.get(u.id);
-        if (scheduled == null) {
-            return true;
         }
         return simTime >= scheduled;
     }
