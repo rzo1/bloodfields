@@ -6,7 +6,7 @@ A headless, JavaFX-free entry point so external programs (LLMs, scripts, tournam
 
 ```bash
 mvn -DskipTests package
-java -cp target/bloodfields-1.1.1-all.jar com.github.rzo1.bloodfields.cli.CliMain help
+java -cp target/bloodfields-1.2.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain help
 ```
 
 A wrapper is provided at `bin/bloodfields-cli`:
