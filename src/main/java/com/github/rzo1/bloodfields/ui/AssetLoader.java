@@ -12,11 +12,6 @@ public final class AssetLoader {
 
     private static final AssetLoader INSTANCE = new AssetLoader();
 
-    private static final Color RED_FILL = Color.web("#8a1a14");
-    private static final Color BLUE_FILL = Color.web("#1a3d7a");
-    private static final Color RED_STROKE = Color.web("#3d0907");
-    private static final Color BLUE_STROKE = Color.web("#0a1f44");
-
     public static final Color GRASS = Color.web("#2f4a26");
     public static final Color RIVER = Color.web("#1f3a55");
     public static final Color FOREST = Color.web("#1a2f17");
@@ -29,12 +24,14 @@ public final class AssetLoader {
         return INSTANCE;
     }
 
+    /** Faction fill — delegates to {@link Theme} so the colour-blind toggle applies live. */
     public Color factionFill(Faction faction) {
-        return faction == Faction.RED ? RED_FILL : BLUE_FILL;
+        return Theme.factionFill(faction);
     }
 
+    /** Faction outline — delegates to {@link Theme} so the colour-blind toggle applies live. */
     public Color factionStroke(Faction faction) {
-        return faction == Faction.RED ? RED_STROKE : BLUE_STROKE;
+        return Theme.factionStroke(faction);
     }
 
     public Image image(String key) {

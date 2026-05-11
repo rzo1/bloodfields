@@ -1,12 +1,37 @@
 package com.github.rzo1.bloodfields.ui;
 
+import com.github.rzo1.bloodfields.model.Faction;
+import javafx.scene.paint.Color;
+
 /**
  * Centralized dark/gore palette + CSS snippets for Bloodfield's UI.
  * Apply by attaching {@link #STYLESHEET} to the Scene's stylesheets and adding
  * {@link #BUTTON_CLASS} (or {@link #PANEL_CLASS} etc.) to the relevant nodes,
  * or use the inline-style helpers for one-off labels.
+ *
+ * <p>Faction accessors ({@link #factionFill(Faction)}, {@link #factionStroke(Faction)})
+ * resolve through {@link AccessibilitySettings} on each call, so a runtime
+ * toggle of the colour-blind palette takes effect immediately — do NOT cache
+ * the returned Color in a static field.
  */
 public final class Theme {
+
+    // Default (lore) faction palette.
+    private static final Color RED_FILL_DEFAULT = Color.web("#8a1a14");
+    private static final Color BLUE_FILL_DEFAULT = Color.web("#1a3d7a");
+    private static final Color RED_STROKE_DEFAULT = Color.web("#3d0907");
+    private static final Color BLUE_STROKE_DEFAULT = Color.web("#0a1f44");
+
+    // Colour-blind-safe palette: orange/cyan is the canonical deutan+protan-safe pair
+    // (cf. Wong 2011 "Points of view: Color blindness", and the IBM Carbon CB palette).
+    private static final Color RED_FILL_CB = Color.web("#e08000");
+    private static final Color BLUE_FILL_CB = Color.web("#0098c8");
+    private static final Color RED_STROKE_CB = Color.web("#6b3a00");
+    private static final Color BLUE_STROKE_CB = Color.web("#004a64");
+
+    // Hero/elite ring — gold, visible in either palette. Drawn as a shape cue
+    // so a player can identify their hero by ring, not just by faction colour.
+    private static final Color HERO_RING_COLOR = Color.web("#e8c84a");
 
     public static final String PANEL_BG = "rgba(20, 18, 16, 0.92)";
     public static final String BUTTON_BG = "linear-gradient(to bottom, #2a2018, #1a1310)";
@@ -32,6 +57,28 @@ public final class Theme {
     public static final String ACCENT_CLASS = "gore-accent";
 
     private Theme() {}
+
+    /** Live faction fill — branches on the current colour-blind palette toggle. */
+    public static Color factionFill(Faction faction) {
+        boolean cb = AccessibilitySettings.get().colourBlindPalette();
+        if (faction == Faction.RED) return cb ? RED_FILL_CB : RED_FILL_DEFAULT;
+        return cb ? BLUE_FILL_CB : BLUE_FILL_DEFAULT;
+    }
+
+    /** Live faction outline — branches on the current colour-blind palette toggle. */
+    public static Color factionStroke(Faction faction) {
+        boolean cb = AccessibilitySettings.get().colourBlindPalette();
+        if (faction == Faction.RED) return cb ? RED_STROKE_CB : RED_STROKE_DEFAULT;
+        return cb ? BLUE_STROKE_CB : BLUE_STROKE_DEFAULT;
+    }
+
+    /**
+     * Gold ring colour used as a shape cue around heroes/elites. Independent
+     * of palette so the hero is identifiable regardless of colour-blindness.
+     */
+    public static Color heroRing() {
+        return HERO_RING_COLOR;
+    }
 
     public static String buttonStyle() {
         return "-fx-background-color: " + BUTTON_BG + ";"

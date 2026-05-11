@@ -3,6 +3,7 @@ package com.github.rzo1.bloodfields.ui;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
@@ -25,6 +26,7 @@ public final class MainMenuRenderer extends VBox {
     private final Button loadButton = new Button("Load");
     private final Label codeError = new Label("");
     private final Label hint = new Label("ENTER / SPACE start campaign  —  ESC quits");
+    private final CheckBox colourBlindToggle = new CheckBox("Colour-blind palette");
     private final Label versionLabel = new Label(BuildInfo.displayString());
     private final HBox updateBanner = new HBox(10);
     private final Label updateLabel = new Label();
@@ -86,13 +88,21 @@ public final class MainMenuRenderer extends VBox {
 
         hint.setStyle(Theme.labelDimStyle());
 
+        colourBlindToggle.setSelected(AccessibilitySettings.get().colourBlindPalette());
+        colourBlindToggle.setFont(Font.font("Georgia", FontWeight.NORMAL, 12));
+        colourBlindToggle.setStyle("-fx-text-fill: " + Theme.TEXT_DIM + ";");
+        colourBlindToggle.selectedProperty().addListener((obs, was, now) -> {
+            AccessibilitySettings.get().setColourBlindPalette(Boolean.TRUE.equals(now));
+            requestLayout();
+        });
+
         versionLabel.setFont(Font.font("Georgia", FontWeight.NORMAL, 10));
         versionLabel.setStyle(Theme.labelDimStyle());
         versionLabel.setMaxWidth(Double.MAX_VALUE);
         versionLabel.setAlignment(Pos.BOTTOM_RIGHT);
         VBox.setMargin(versionLabel, new Insets(20, 0, 0, 0));
 
-        getChildren().addAll(title, updateBanner, campaignButton, skirmishButton, versusButton, codeRow, codeError, hint, versionLabel);
+        getChildren().addAll(title, updateBanner, campaignButton, skirmishButton, versusButton, codeRow, codeError, hint, colourBlindToggle, versionLabel);
     }
 
     private void configureUpdateBanner() {
@@ -164,6 +174,7 @@ public final class MainMenuRenderer extends VBox {
     public Button campaignButton() { return campaignButton; }
     public Button skirmishButton() { return skirmishButton; }
     public Button versusButton() { return versusButton; }
+    public CheckBox colourBlindToggle() { return colourBlindToggle; }
 
     private void tryLoad() {
         String code = codeField.getText();
