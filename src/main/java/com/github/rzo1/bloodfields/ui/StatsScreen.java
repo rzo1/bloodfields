@@ -111,8 +111,8 @@ public final class StatsScreen {
             g.setFont(value);
             g.setFill(WHITE);
             g.setTextAlign(TextAlignment.CENTER);
-            g.fillText(valueFor(i, Faction.RED, summary, secondsPerTick), leftCol, y);
-            g.fillText(valueFor(i, Faction.BLUE, summary, secondsPerTick), rightCol, y);
+            g.fillText(valueFor(i, Faction.RED, summary, secondsPerTick, winner), leftCol, y);
+            g.fillText(valueFor(i, Faction.BLUE, summary, secondsPerTick, winner), rightCol, y);
         }
 
         Font hint = Font.font("Georgia", 12);
@@ -124,13 +124,20 @@ public final class StatsScreen {
         g.restore();
     }
 
-    private static String valueFor(int row, Faction f, BattleStats.Summary s, double secondsPerTick) {
+    private static String valueFor(int row, Faction f, BattleStats.Summary s,
+                                   double secondsPerTick, Faction winner) {
         switch (row) {
             case 0: return Integer.toString(s.kills(f));
             case 1: return Integer.toString(s.deaths(f));
             case 2: return formatDouble(s.damageDealt(f));
             case 3: return formatDouble(s.biggestHit(f));
-            case 4: return String.format("%.1f", Math.max(0.0, s.lastFallTick(f) * secondsPerTick));
+            case 4:
+                // The winner's lastFallTick equals the battle-end tick because
+                // they still have units alive — showing it as "last alive at
+                // X.Xs" reads like they died too. Show an em-dash for the
+                // surviving faction; the loser shows when their last unit fell.
+                if (winner != null && winner == f) return "—";
+                return String.format("%.1f", Math.max(0.0, s.lastFallTick(f) * secondsPerTick));
             default: return "?";
         }
     }
