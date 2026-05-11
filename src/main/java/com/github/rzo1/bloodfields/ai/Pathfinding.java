@@ -4,14 +4,24 @@ import com.github.rzo1.bloodfields.engine.StructureField;
 import com.github.rzo1.bloodfields.engine.World;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 
 public final class Pathfinding {
 
     private static final double SQRT2 = Math.sqrt(2.0);
     public static final int MAX_EXPANSIONS = 800;
+
+    private static final int[][] DIRS = {
+            {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+            {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+    };
+
+    // Per-thread scratch space: Node pool, generation map, and reusable heap.
+    // Sim runs on one thread today; threading the AI later still gets correct
+    // isolation for free.
+    private static final ThreadLocal<Workspace> WORKSPACE = ThreadLocal.withInitial(Workspace::new);
 
     private Pathfinding() {}
 
@@ -52,19 +62,14 @@ public final class Pathfinding {
             }
         }
 
-        HashMap<Long, Node> nodes = new HashMap<>();
-        MinHeap open = new MinHeap();
+        Workspace ws = WORKSPACE.get();
+        ws.prepare(cols, rows);
+        MinHeap open = ws.heap;
 
-        Node start = new Node(sCol, sRow);
+        Node start = ws.getOrCreate(sCol, sRow);
         start.g = 0.0;
         start.f = octile(sCol, sRow, tCol, tRow);
-        nodes.put(packKey(sCol, sRow), start);
         open.push(start);
-
-        int[][] dirs = {
-                {1, 0}, {-1, 0}, {0, 1}, {0, -1},
-                {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
-        };
 
         int expansions = 0;
         while (!open.isEmpty()) {
@@ -79,7 +84,7 @@ public final class Pathfinding {
                 return reconstruct(cur, w);
             }
 
-            for (int[] d : dirs) {
+            for (int[] d : DIRS) {
                 int nc = cur.col + d[0];
                 int nr = cur.row + d[1];
                 if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
@@ -92,12 +97,7 @@ public final class Pathfinding {
                 }
                 double step = (d[0] != 0 && d[1] != 0) ? SQRT2 : 1.0;
                 double tentativeG = cur.g + step;
-                long nk = packKey(nc, nr);
-                Node neighbor = nodes.get(nk);
-                if (neighbor == null) {
-                    neighbor = new Node(nc, nr);
-                    nodes.put(nk, neighbor);
-                }
+                Node neighbor = ws.getOrCreate(nc, nr);
                 if (neighbor.closed) continue;
                 if (tentativeG < neighbor.g) {
                     neighbor.parent = cur;
@@ -185,22 +185,66 @@ public final class Pathfinding {
         return v;
     }
 
-    private static long packKey(int col, int row) {
-        return (((long) col) << 32) | (row & 0xffffffffL);
-    }
-
     private static final class Node {
-        final int col;
-        final int row;
+        int col;
+        int row;
         Node parent;
         double g = Double.POSITIVE_INFINITY;
         double f = Double.POSITIVE_INFINITY;
         int heapIdx = -1;
         boolean closed;
+    }
 
-        Node(int col, int row) {
-            this.col = col;
-            this.row = row;
+    /**
+     * Reusable per-thread scratch space. Holds a Node pool indexed by tile and
+     * a generation counter so we don't have to clear the pool between calls —
+     * a slot whose {@code generation[idx]} doesn't match {@code currentGen} is
+     * stale and will be reinitialised on first access.
+     */
+    private static final class Workspace {
+        private int cols;
+        private int rows;
+        private int[] generation;
+        private Node[] node;
+        private int currentGen;
+        final MinHeap heap = new MinHeap();
+
+        void prepare(int newCols, int newRows) {
+            int size = newCols * newRows;
+            if (generation == null || size > generation.length) {
+                generation = new int[size];
+                node = new Node[size];
+                currentGen = 0;
+            }
+            cols = newCols;
+            rows = newRows;
+            currentGen++;
+            if (currentGen <= 0) {
+                // Overflow guard: reset everyone to stale and start over at 1.
+                Arrays.fill(generation, 0, size, 0);
+                currentGen = 1;
+            }
+            heap.clear();
+        }
+
+        Node getOrCreate(int col, int row) {
+            int idx = col * rows + row;
+            if (generation[idx] != currentGen) {
+                Node n = node[idx];
+                if (n == null) {
+                    n = new Node();
+                    node[idx] = n;
+                }
+                n.col = col;
+                n.row = row;
+                n.parent = null;
+                n.g = Double.POSITIVE_INFINITY;
+                n.f = Double.POSITIVE_INFINITY;
+                n.heapIdx = -1;
+                n.closed = false;
+                generation[idx] = currentGen;
+            }
+            return node[idx];
         }
     }
 
@@ -210,6 +254,14 @@ public final class Pathfinding {
 
         boolean isEmpty() {
             return size == 0;
+        }
+
+        void clear() {
+            // Pooled Nodes are referenced from Workspace.node[] anyway, so
+            // dropping heap[] refs isn't load-bearing for GC; we just need
+            // size = 0. Leaving stale references is harmless because we never
+            // read past index < size.
+            size = 0;
         }
 
         void push(Node n) {
