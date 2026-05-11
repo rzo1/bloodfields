@@ -138,6 +138,7 @@
 
 .text-field:focused {
     -fx-border-color: #c8332e;
+    -fx-effect: dropshadow(gaussian, #c8332e, 10, 0.6, 0, 0);
 }
 
 .check-box {
@@ -155,12 +156,22 @@
     -fx-background-color: #c8332e;
 }
 
+.check-box:focused .box {
+    -fx-border-color: #c8332e;
+    -fx-effect: dropshadow(gaussian, #c8332e, 10, 0.6, 0, 0);
+}
+
 .combo-box {
     -fx-background-color: linear-gradient(to bottom, #2a2018, #1a1310);
     -fx-border-color: #5a1a14;
     -fx-border-width: 1px;
     -fx-background-radius: 2px;
     -fx-border-radius: 2px;
+}
+
+.combo-box:focused {
+    -fx-border-color: #c8332e;
+    -fx-effect: dropshadow(gaussian, #c8332e, 10, 0.6, 0, 0);
 }
 
 .combo-box .list-cell {
@@ -193,6 +204,10 @@
 
 .slider .axis {
     -fx-tick-label-fill: #7a6c5c;
+}
+
+.slider:focused .thumb {
+    -fx-effect: dropshadow(gaussian, #c8332e, 10, 0.6, 0, 0);
 }
 
 .scroll-pane {
