@@ -32,6 +32,7 @@ public final class WallSplatter {
 
     private final List<Splat> splats = new ArrayList<>();
     private final Map<Long, Integer> countsById = new HashMap<>();
+    private final Map<Long, Structure> byIdScratch = new HashMap<>();
     private final Random random;
 
     public WallSplatter() {
@@ -98,12 +99,12 @@ public final class WallSplatter {
         if (splats.isEmpty() || field == null) {
             return;
         }
-        Map<Long, Structure> byId = new HashMap<>();
+        byIdScratch.clear();
         for (Structure s : field.structures()) {
             if (s == null) continue;
-            byId.put(s.id(), s);
+            byIdScratch.put(s.id(), s);
         }
-        if (byId.isEmpty()) {
+        if (byIdScratch.isEmpty()) {
             return;
         }
         gc.save();
@@ -113,7 +114,7 @@ public final class WallSplatter {
         gc.setFill(SPLAT_FILL);
         gc.setGlobalAlpha(0.85);
         for (Splat sp : splats) {
-            Structure s = byId.get(sp.structureId);
+            Structure s = byIdScratch.get(sp.structureId);
             if (s == null) continue;
             double cx = s.x() + sp.offsetX;
             double cy = s.y() + sp.offsetY;
@@ -125,5 +126,6 @@ public final class WallSplatter {
         }
         gc.setGlobalAlpha(1.0);
         gc.restore();
+        byIdScratch.clear();
     }
 }

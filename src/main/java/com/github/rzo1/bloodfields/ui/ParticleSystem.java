@@ -127,21 +127,39 @@ public class ParticleSystem {
         if (dt <= 0.0) {
             return;
         }
-        for (int i = particles.size() - 1; i >= 0; i--) {
+        int n = particles.size();
+        int i = 0;
+        while (i < n) {
             Particle p = particles.get(i);
             p.vy += GRAVITY * dt;
             p.x += p.vx * dt;
             p.y += p.vy * dt;
             p.life -= dt;
             if (p.life <= 0.0) {
-                particles.remove(i);
+                int last = n - 1;
+                if (i != last) {
+                    particles.set(i, particles.get(last));
+                }
+                particles.remove(last);
+                n--;
+            } else {
+                i++;
             }
         }
-        for (int i = pools.size() - 1; i >= 0; i--) {
-            BloodPool pool = pools.get(i);
+        int m = pools.size();
+        int j = 0;
+        while (j < m) {
+            BloodPool pool = pools.get(j);
             pool.age += dt;
             if (pool.age >= pool.maxAge) {
-                pools.remove(i);
+                int last = m - 1;
+                if (j != last) {
+                    pools.set(j, pools.get(last));
+                }
+                pools.remove(last);
+                m--;
+            } else {
+                j++;
             }
         }
     }

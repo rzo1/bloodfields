@@ -2,6 +2,7 @@ package com.github.rzo1.bloodfields.ui;
 
 import com.github.rzo1.bloodfields.engine.Corpse;
 import com.github.rzo1.bloodfields.engine.CorpseField;
+import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.UnitType;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
@@ -21,6 +22,28 @@ public final class CorpseRenderer {
     private static final double CHARRED_ALPHA = 0.85;
     private static final Color ROTTED_TARGET = Color.web("#3d2010");
 
+    private static final int PALETTE_STEPS = 16;
+    private static final Color[] RED_DECAY_PALETTE = buildDecayPalette(AssetLoader.get().factionStroke(Faction.RED));
+    private static final Color[] BLUE_DECAY_PALETTE = buildDecayPalette(AssetLoader.get().factionStroke(Faction.BLUE));
+
+    private static Color[] buildDecayPalette(Color stroke) {
+        Color base = darken(stroke, DARKEN_MIX);
+        Color[] out = new Color[PALETTE_STEPS];
+        for (int i = 0; i < PALETTE_STEPS; i++) {
+            double t = PALETTE_STEPS == 1 ? 0.0 : (double) i / (PALETTE_STEPS - 1);
+            out[i] = lerp(base, ROTTED_TARGET, t);
+        }
+        return out;
+    }
+
+    private static Color decayColor(Faction faction, double t) {
+        Color[] palette = faction == Faction.RED ? RED_DECAY_PALETTE : BLUE_DECAY_PALETTE;
+        int idx = (int) Math.round(t * (PALETTE_STEPS - 1));
+        if (idx < 0) idx = 0;
+        else if (idx >= PALETTE_STEPS) idx = PALETTE_STEPS - 1;
+        return palette[idx];
+    }
+
     private static final double UNIT_SIZE = 16.0;
     private static final double UNIT_HALF = UNIT_SIZE / 2.0;
     private static final double UNIT_ARC = 5.0;
@@ -32,9 +55,9 @@ public final class CorpseRenderer {
     private static final double DRAGON_R = 18.0;
     private static final double NECRO_R = 7.0;
 
-    private final AssetLoader assets = AssetLoader.get();
     private final Map<Long, UnitType> killerType = new HashMap<>();
     private final Map<Long, Double> ages = new HashMap<>();
+    private final java.util.HashSet<Long> liveIdsScratch = new java.util.HashSet<>();
 
     public void noteKiller(long corpseId, UnitType killer) {
         if (killer == null) {
@@ -57,15 +80,16 @@ public final class CorpseRenderer {
         if (dt <= 0.0 || field == null) {
             return;
         }
-        java.util.Set<Long> liveIds = new java.util.HashSet<>();
+        liveIdsScratch.clear();
         for (Corpse c : field.corpses()) {
             if (c == null) continue;
             long id = c.id();
-            liveIds.add(id);
+            liveIdsScratch.add(id);
             ages.merge(id, dt, Double::sum);
         }
-        ages.keySet().retainAll(liveIds);
-        killerType.keySet().retainAll(liveIds);
+        ages.keySet().retainAll(liveIdsScratch);
+        killerType.keySet().retainAll(liveIdsScratch);
+        liveIdsScratch.clear();
     }
 
     public void clear() {
@@ -95,8 +119,7 @@ public final class CorpseRenderer {
                 fill = CHARRED_FILL;
                 alpha = CHARRED_ALPHA * (1.0 - t * 0.4);
             } else {
-                Color base = darken(assets.factionStroke(c.faction()), DARKEN_MIX);
-                fill = lerp(base, ROTTED_TARGET, t);
+                fill = decayColor(c.faction(), t);
                 alpha = FRESH_ALPHA + (ROTTED_ALPHA - FRESH_ALPHA) * t;
             }
             gc.setGlobalAlpha(alpha);

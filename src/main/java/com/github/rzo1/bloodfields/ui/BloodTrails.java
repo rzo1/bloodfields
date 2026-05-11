@@ -34,6 +34,7 @@ public final class BloodTrails {
 
     private final Deque<TrailDot> drips = new ArrayDeque<>();
     private final Map<Long, double[]> lastEmitPos = new HashMap<>();
+    private final java.util.HashSet<Long> aliveScratch = new java.util.HashSet<>();
 
     public int size() {
         return drips.size();
@@ -50,20 +51,26 @@ public final class BloodTrails {
 
     public void update(List<Unit> units) {
         if (units == null) return;
-        java.util.Set<Long> alive = new java.util.HashSet<>();
+        aliveScratch.clear();
         for (Unit u : units) {
             if (u == null) continue;
-            alive.add(u.id);
+            aliveScratch.add(u.id);
             if (!u.isAlive()) continue;
             if (u.maxHp <= 0.0) continue;
             double frac = u.hp / u.maxHp;
+            double[] last = lastEmitPos.get(u.id);
             if (frac >= WOUNDED_THRESHOLD) {
-                lastEmitPos.put(u.id, new double[]{u.x, u.y});
+                if (last == null) {
+                    last = new double[2];
+                    lastEmitPos.put(u.id, last);
+                }
+                last[0] = u.x;
+                last[1] = u.y;
                 continue;
             }
-            double[] last = lastEmitPos.get(u.id);
             if (last == null) {
-                lastEmitPos.put(u.id, new double[]{u.x, u.y});
+                last = new double[]{u.x, u.y};
+                lastEmitPos.put(u.id, last);
                 continue;
             }
             double dx = u.x - last[0];
@@ -79,7 +86,8 @@ public final class BloodTrails {
             last[0] = u.x;
             last[1] = u.y;
         }
-        lastEmitPos.keySet().retainAll(alive);
+        lastEmitPos.keySet().retainAll(aliveScratch);
+        aliveScratch.clear();
     }
 
     private void addDrip(TrailDot d) {
