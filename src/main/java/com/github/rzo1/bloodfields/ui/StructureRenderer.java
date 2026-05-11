@@ -41,6 +41,13 @@ public final class StructureRenderer {
     private static final double HP_BAR_PAD = 4.0;
     private static final double STRUCTURE_CULL_MARGIN = 32.0;
 
+    // Scratch arrays reused across the FX-thread render pass to avoid per-structure
+    // / per-miniature double[] allocations for polygon vertices.
+    private static final double[] POLY_X3 = new double[3];
+    private static final double[] POLY_Y3 = new double[3];
+    private static final double[] POLY_X4 = new double[4];
+    private static final double[] POLY_Y4 = new double[4];
+
     public void render(GraphicsContext gc, StructureField field, Camera camera) {
         if (field == null || field.structures().isEmpty()) {
             return;
@@ -61,6 +68,10 @@ public final class StructureRenderer {
             camera.apply(gc);
         }
         gc.setLineWidth(2.0);
+        // Track last set fill/stroke so consecutive walls / towers skip redundant
+        // setFill/setStroke calls.
+        Color lastFill = null;
+        Color lastStroke = null;
         for (Structure s : field.structures()) {
             if (s == null) continue;
             if (s.x() + s.width() < viewMinX || s.x() > viewMaxX
@@ -70,39 +81,57 @@ public final class StructureRenderer {
             boolean destroyed = field.isDestroyed(s);
             switch (s.type()) {
                 case WALL:
-                    drawRect(gc, s, WALL_FILL, WALL_STROKE);
+                    if (lastFill != WALL_FILL) { gc.setFill(WALL_FILL); lastFill = WALL_FILL; }
+                    if (lastStroke != WALL_STROKE) { gc.setStroke(WALL_STROKE); lastStroke = WALL_STROKE; }
+                    gc.fillRect(s.x(), s.y(), s.width(), s.height());
+                    gc.strokeRect(s.x(), s.y(), s.width(), s.height());
                     break;
                 case TOWER:
-                    drawRect(gc, s, WALL_FILL, WALL_STROKE);
+                    if (lastFill != WALL_FILL) { gc.setFill(WALL_FILL); lastFill = WALL_FILL; }
+                    if (lastStroke != WALL_STROKE) { gc.setStroke(WALL_STROKE); lastStroke = WALL_STROKE; }
+                    gc.fillRect(s.x(), s.y(), s.width(), s.height());
+                    gc.strokeRect(s.x(), s.y(), s.width(), s.height());
                     drawCrenellations(gc, s);
                     break;
                 case GATE:
                     if (destroyed) {
                         drawRuinedGate(gc, s);
+                        // gc.save()/restore() inside drawRuinedGate may have reset fill/stroke.
+                        lastFill = null; lastStroke = null;
                     } else if (field.isOpen(s)) {
                         drawOpenGate(gc, s);
+                        lastFill = null; lastStroke = null;
                     } else {
-                        drawRect(gc, s, GATE_FILL, GATE_STROKE);
+                        if (lastFill != GATE_FILL) { gc.setFill(GATE_FILL); lastFill = GATE_FILL; }
+                        if (lastStroke != GATE_STROKE) { gc.setStroke(GATE_STROKE); lastStroke = GATE_STROKE; }
+                        gc.fillRect(s.x(), s.y(), s.width(), s.height());
+                        gc.strokeRect(s.x(), s.y(), s.width(), s.height());
                         drawGateDetail(gc, s);
+                        lastFill = null; lastStroke = null;
                     }
                     if (!destroyed) {
                         drawGateLabel(gc, s, field.isOpen(s));
+                        lastFill = null; lastStroke = null;
                     }
                     break;
             }
             if (!destroyed) {
-                drawGarrisonMarkers(gc, s, field);
+                boolean hadGarrison = drawGarrisonMarkers(gc, s, field);
                 drawHpBar(gc, s, field);
+                // drawHpBar always mutates fill. drawMiniature mutates fill+stroke
+                // only if there was a non-empty garrison.
+                lastFill = null;
+                if (hadGarrison) lastStroke = null;
             }
         }
         gc.setLineWidth(1.0);
         gc.restore();
     }
 
-    private static void drawGarrisonMarkers(GraphicsContext gc, Structure s, StructureField field) {
-        if (s.type() == StructureType.GATE) return;
+    private static boolean drawGarrisonMarkers(GraphicsContext gc, Structure s, StructureField field) {
+        if (s.type() == StructureType.GATE) return false;
         List<Unit> garrison = field.garrisonOf(s);
-        if (garrison == null || garrison.isEmpty()) return;
+        if (garrison == null || garrison.isEmpty()) return false;
         AssetLoader assets = AssetLoader.get();
         double slot = 12.0;
         double pad = 3.0;
@@ -111,6 +140,7 @@ public final class StructureRenderer {
         double startX = s.x() + (s.width() - total) / 2.0;
         double yCenter = s.y() + s.height() / 2.0;
         gc.setLineWidth(1.0);
+        boolean drew = false;
         for (int i = 0; i < n; i++) {
             Unit u = garrison.get(i);
             if (u == null) continue;
@@ -118,7 +148,9 @@ public final class StructureRenderer {
             Color fill = assets.factionFill(u.faction);
             Color stroke = assets.factionStroke(u.faction);
             drawMiniature(gc, cx, yCenter, u.type, fill, stroke, slot);
+            drew = true;
         }
+        return drew;
     }
 
     static void drawMiniature(GraphicsContext gc, double cx, double cy,
@@ -129,10 +161,10 @@ public final class StructureRenderer {
         gc.setStroke(stroke);
         switch (shape) {
             case TRIANGLE: {
-                double[] xs = {cx, cx - half, cx + half};
-                double[] ys = {cy - half, cy + half, cy + half};
-                gc.fillPolygon(xs, ys, 3);
-                gc.strokePolygon(xs, ys, 3);
+                POLY_X3[0] = cx; POLY_X3[1] = cx - half; POLY_X3[2] = cx + half;
+                POLY_Y3[0] = cy - half; POLY_Y3[1] = cy + half; POLY_Y3[2] = cy + half;
+                gc.fillPolygon(POLY_X3, POLY_Y3, 3);
+                gc.strokePolygon(POLY_X3, POLY_Y3, 3);
                 break;
             }
             case HORIZONTAL_RECT: {
@@ -141,10 +173,10 @@ public final class StructureRenderer {
                 gc.fillRoundRect(cx - w / 2.0, cy - h / 2.0, w, h, 2.0, 2.0);
                 gc.strokeRoundRect(cx - w / 2.0, cy - h / 2.0, w, h, 2.0, 2.0);
                 double tipX = cx + w / 2.0 + size * 0.25;
-                double[] wxs = {tipX, cx + w / 2.0, cx + w / 2.0};
-                double[] wys = {cy, cy - h / 2.0, cy + h / 2.0};
-                gc.fillPolygon(wxs, wys, 3);
-                gc.strokePolygon(wxs, wys, 3);
+                POLY_X3[0] = tipX; POLY_X3[1] = cx + w / 2.0; POLY_X3[2] = cx + w / 2.0;
+                POLY_Y3[0] = cy; POLY_Y3[1] = cy - h / 2.0; POLY_Y3[2] = cy + h / 2.0;
+                gc.fillPolygon(POLY_X3, POLY_Y3, 3);
+                gc.strokePolygon(POLY_X3, POLY_Y3, 3);
                 break;
             }
             case CIRCLE_WITH_HAT: {
@@ -152,28 +184,28 @@ public final class StructureRenderer {
                 gc.fillOval(cx - r, cy - r * 0.5, r * 2.0, r * 2.0);
                 gc.strokeOval(cx - r, cy - r * 0.5, r * 2.0, r * 2.0);
                 double hatBase = cy - r * 0.5;
-                double[] hxs = {cx, cx - r * 0.6, cx + r * 0.6};
-                double[] hys = {hatBase - r * 0.9, hatBase, hatBase};
+                POLY_X3[0] = cx; POLY_X3[1] = cx - r * 0.6; POLY_X3[2] = cx + r * 0.6;
+                POLY_Y3[0] = hatBase - r * 0.9; POLY_Y3[1] = hatBase; POLY_Y3[2] = hatBase;
                 gc.setFill(MINI_HAT);
-                gc.fillPolygon(hxs, hys, 3);
-                gc.strokePolygon(hxs, hys, 3);
+                gc.fillPolygon(POLY_X3, POLY_Y3, 3);
+                gc.strokePolygon(POLY_X3, POLY_Y3, 3);
                 break;
             }
             case DRAGON: {
-                double[] xs = {cx, cx + half, cx, cx - half};
-                double[] ys = {cy - half, cy, cy + half, cy};
-                gc.fillPolygon(xs, ys, 4);
-                gc.strokePolygon(xs, ys, 4);
+                POLY_X4[0] = cx; POLY_X4[1] = cx + half; POLY_X4[2] = cx; POLY_X4[3] = cx - half;
+                POLY_Y4[0] = cy - half; POLY_Y4[1] = cy; POLY_Y4[2] = cy + half; POLY_Y4[3] = cy;
+                gc.fillPolygon(POLY_X4, POLY_Y4, 4);
+                gc.strokePolygon(POLY_X4, POLY_Y4, 4);
                 double wx = half * 0.8;
-                double[] lwx = {cx - half * 0.3, cx - wx, cx + half * 0.3};
-                double[] lwy = {cy, cy - half * 0.6, cy};
                 gc.setFill(fill.deriveColor(0, 1.0, 0.7, 0.85));
-                gc.fillPolygon(lwx, lwy, 3);
-                gc.strokePolygon(lwx, lwy, 3);
-                double[] rwx = {cx - half * 0.3, cx + wx, cx + half * 0.3};
-                double[] rwy = {cy, cy - half * 0.6, cy};
-                gc.fillPolygon(rwx, rwy, 3);
-                gc.strokePolygon(rwx, rwy, 3);
+                POLY_X3[0] = cx - half * 0.3; POLY_X3[1] = cx - wx; POLY_X3[2] = cx + half * 0.3;
+                POLY_Y3[0] = cy; POLY_Y3[1] = cy - half * 0.6; POLY_Y3[2] = cy;
+                gc.fillPolygon(POLY_X3, POLY_Y3, 3);
+                gc.strokePolygon(POLY_X3, POLY_Y3, 3);
+                POLY_X3[0] = cx - half * 0.3; POLY_X3[1] = cx + wx; POLY_X3[2] = cx + half * 0.3;
+                POLY_Y3[0] = cy; POLY_Y3[1] = cy - half * 0.6; POLY_Y3[2] = cy;
+                gc.fillPolygon(POLY_X3, POLY_Y3, 3);
+                gc.strokePolygon(POLY_X3, POLY_Y3, 3);
                 break;
             }
             case NECROMANCER: {
@@ -182,11 +214,11 @@ public final class StructureRenderer {
                 gc.fillOval(cx - r, cy - r * 0.5, r * 2.0, r * 2.0);
                 gc.strokeOval(cx - r, cy - r * 0.5, r * 2.0, r * 2.0);
                 double hoodBase = cy - r * 0.5;
-                double[] hxs = {cx, cx - r * 0.7, cx + r * 0.7};
-                double[] hys = {hoodBase - r * 0.6, hoodBase, hoodBase};
+                POLY_X3[0] = cx; POLY_X3[1] = cx - r * 0.7; POLY_X3[2] = cx + r * 0.7;
+                POLY_Y3[0] = hoodBase - r * 0.6; POLY_Y3[1] = hoodBase; POLY_Y3[2] = hoodBase;
                 gc.setFill(fill);
-                gc.fillPolygon(hxs, hys, 3);
-                gc.strokePolygon(hxs, hys, 3);
+                gc.fillPolygon(POLY_X3, POLY_Y3, 3);
+                gc.strokePolygon(POLY_X3, POLY_Y3, 3);
                 break;
             }
             case HEALER: {
@@ -209,11 +241,11 @@ public final class StructureRenderer {
                 break;
             }
             case ASSASSIN: {
-                double[] xs = {cx, cx + half, cx, cx - half};
-                double[] ys = {cy - half, cy, cy + half, cy};
+                POLY_X4[0] = cx; POLY_X4[1] = cx + half; POLY_X4[2] = cx; POLY_X4[3] = cx - half;
+                POLY_Y4[0] = cy - half; POLY_Y4[1] = cy; POLY_Y4[2] = cy + half; POLY_Y4[3] = cy;
                 gc.setFill(MINI_ASSASSIN_FILL);
-                gc.fillPolygon(xs, ys, 4);
-                gc.strokePolygon(xs, ys, 4);
+                gc.fillPolygon(POLY_X4, POLY_Y4, 4);
+                gc.strokePolygon(POLY_X4, POLY_Y4, 4);
                 break;
             }
             case GOLEM: {
@@ -231,10 +263,10 @@ public final class StructureRenderer {
                 break;
             }
             case GENERAL: {
-                double[] xs = {cx, cx - half, cx + half};
-                double[] ys = {cy - half, cy + half, cy + half};
-                gc.fillPolygon(xs, ys, 3);
-                gc.strokePolygon(xs, ys, 3);
+                POLY_X3[0] = cx; POLY_X3[1] = cx - half; POLY_X3[2] = cx + half;
+                POLY_Y3[0] = cy - half; POLY_Y3[1] = cy + half; POLY_Y3[2] = cy + half;
+                gc.fillPolygon(POLY_X3, POLY_Y3, 3);
+                gc.strokePolygon(POLY_X3, POLY_Y3, 3);
                 gc.setFill(MINI_CROWN_FILL);
                 gc.setStroke(MINI_CROWN_STROKE);
                 double cw = Math.max(1.0, size * 0.15);
@@ -242,10 +274,10 @@ public final class StructureRenderer {
                 double topY = cy - half - ch;
                 for (int k = -1; k <= 1; k++) {
                     double tx = cx + k * (cw + 0.5);
-                    double[] tcx = {tx, tx - cw / 2.0, tx + cw / 2.0};
-                    double[] tcy = {topY, topY + ch, topY + ch};
-                    gc.fillPolygon(tcx, tcy, 3);
-                    gc.strokePolygon(tcx, tcy, 3);
+                    POLY_X3[0] = tx; POLY_X3[1] = tx - cw / 2.0; POLY_X3[2] = tx + cw / 2.0;
+                    POLY_Y3[0] = topY; POLY_Y3[1] = topY + ch; POLY_Y3[2] = topY + ch;
+                    gc.fillPolygon(POLY_X3, POLY_Y3, 3);
+                    gc.strokePolygon(POLY_X3, POLY_Y3, 3);
                 }
                 break;
             }
@@ -367,18 +399,20 @@ public final class StructureRenderer {
         double notchW = Math.max(3.0, s.width() / 6.0);
         double notchH = Math.max(3.0, s.height() / 6.0);
         double topY = s.y() - notchH;
-        double[] centersX = new double[]{
-                s.x() + s.width() * 0.2,
-                s.x() + s.width() * 0.5,
-                s.x() + s.width() * 0.8
-        };
+        double halfNotch = notchW / 2.0;
+        double sx = s.x();
+        double sw = s.width();
         gc.setFill(WALL_FILL);
         gc.setStroke(WALL_STROKE);
-        for (double cx : centersX) {
-            double rx = cx - notchW / 2.0;
-            gc.fillRect(rx, topY, notchW, notchH);
-            gc.strokeRect(rx, topY, notchW, notchH);
-        }
+        double rx0 = sx + sw * 0.2 - halfNotch;
+        double rx1 = sx + sw * 0.5 - halfNotch;
+        double rx2 = sx + sw * 0.8 - halfNotch;
+        gc.fillRect(rx0, topY, notchW, notchH);
+        gc.strokeRect(rx0, topY, notchW, notchH);
+        gc.fillRect(rx1, topY, notchW, notchH);
+        gc.strokeRect(rx1, topY, notchW, notchH);
+        gc.fillRect(rx2, topY, notchW, notchH);
+        gc.strokeRect(rx2, topY, notchW, notchH);
     }
 
     private static void drawHpBar(GraphicsContext gc, Structure s, StructureField field) {

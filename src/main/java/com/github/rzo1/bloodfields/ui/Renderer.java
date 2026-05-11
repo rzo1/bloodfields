@@ -131,6 +131,20 @@ public final class Renderer {
     private double cachedVignetteHeight = -1.0;
 
     private double viewMinX, viewMinY, viewMaxX, viewMaxY;
+    private final TerrainCache terrainCache = new TerrainCache();
+
+    // Scratch arrays reused across the FX-thread render pass to avoid per-unit
+    // double[] allocations for polygon vertices.
+    private final double[] polyX3 = new double[3];
+    private final double[] polyY3 = new double[3];
+    private final double[] polyX4 = new double[4];
+    private final double[] polyY4 = new double[4];
+
+    // Dragon wing color is fill.deriveColor(0, 1.0, 0.7, 0.85) — a faction-derived
+    // shade. Two-slot identity cache covers the usual two-faction case without
+    // thrashing on alternating dragons.
+    private Color dragonWingK0, dragonWingV0;
+    private Color dragonWingK1, dragonWingV1;
 
     public void setAuraContext(GameState state, double simTime) {
         this.auraState = state;
@@ -463,20 +477,12 @@ public final class Renderer {
         if (grid == null) {
             return;
         }
-        for (int col = 0; col < grid.length; col++) {
-            TileType[] line = grid[col];
-            if (line == null) {
-                continue;
-            }
-            for (int row = 0; row < line.length; row++) {
-                TileType t = line[row];
-                if (t == null || t == TileType.GRASS) {
-                    continue;
-                }
-                gc.setFill(t == TileType.RIVER ? RIVER : FOREST);
-                gc.fillRect(col * tileSize, row * tileSize, tileSize, tileSize);
-            }
-        }
+        // Static terrain (RIVER/FOREST tiles; GRASS is the cleared background)
+        // is cached into a WritableImage by TerrainCache and only rebuilt on
+        // world identity / tile-size change. The per-frame cost collapses to
+        // one drawImage of the visible region instead of N fillRect calls.
+        terrainCache.ensureFresh(grid, tileSize);
+        terrainCache.draw(gc, viewMinX, viewMinY, viewMaxX - viewMinX, viewMaxY - viewMinY);
     }
 
     private void drawShadows(GraphicsContext gc, List<Unit> units) {
@@ -580,12 +586,12 @@ public final class Renderer {
     private void drawTriangleUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
         double halfW = TRIANGLE_W / 2.0;
         double halfH = TRIANGLE_H / 2.0;
-        double[] xs = new double[]{u.x, u.x - halfW, u.x + halfW};
-        double[] ys = new double[]{u.y - halfH, u.y + halfH, u.y + halfH};
+        polyX3[0] = u.x; polyX3[1] = u.x - halfW; polyX3[2] = u.x + halfW;
+        polyY3[0] = u.y - halfH; polyY3[1] = u.y + halfH; polyY3[2] = u.y + halfH;
         gc.setFill(fill);
         gc.setStroke(stroke);
-        gc.fillPolygon(xs, ys, 3);
-        gc.strokePolygon(xs, ys, 3);
+        gc.fillPolygon(polyX3, polyY3, 3);
+        gc.strokePolygon(polyX3, polyY3, 3);
     }
 
     private void drawCavalryUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
@@ -612,20 +618,16 @@ public final class Renderer {
         double perpY = dirX;
         double baseX = u.x + dirX * halfW;
         double baseY = u.y + dirY * halfW;
-        double[] xs = new double[]{
-                tipX,
-                baseX + perpX * halfH,
-                baseX - perpX * halfH
-        };
-        double[] ys = new double[]{
-                tipY,
-                baseY + perpY * halfH,
-                baseY - perpY * halfH
-        };
+        polyX3[0] = tipX;
+        polyX3[1] = baseX + perpX * halfH;
+        polyX3[2] = baseX - perpX * halfH;
+        polyY3[0] = tipY;
+        polyY3[1] = baseY + perpY * halfH;
+        polyY3[2] = baseY - perpY * halfH;
         gc.setFill(fill);
         gc.setStroke(stroke);
-        gc.fillPolygon(xs, ys, 3);
-        gc.strokePolygon(xs, ys, 3);
+        gc.fillPolygon(polyX3, polyY3, 3);
+        gc.strokePolygon(polyX3, polyY3, 3);
     }
 
     private void drawMageUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
@@ -636,12 +638,12 @@ public final class Renderer {
         gc.strokeOval(u.x - r, u.y - r, r * 2.0, r * 2.0);
 
         double hatBaseY = u.y - r;
-        double[] xs = new double[]{u.x, u.x - HAT_W / 2.0, u.x + HAT_W / 2.0};
-        double[] ys = new double[]{hatBaseY - HAT_H, hatBaseY, hatBaseY};
+        polyX3[0] = u.x; polyX3[1] = u.x - HAT_W / 2.0; polyX3[2] = u.x + HAT_W / 2.0;
+        polyY3[0] = hatBaseY - HAT_H; polyY3[1] = hatBaseY; polyY3[2] = hatBaseY;
         gc.setFill(HAT_COLOR);
         gc.setStroke(stroke);
-        gc.fillPolygon(xs, ys, 3);
-        gc.strokePolygon(xs, ys, 3);
+        gc.fillPolygon(polyX3, polyY3, 3);
+        gc.strokePolygon(polyX3, polyY3, 3);
     }
 
     private void drawNecromancerUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
@@ -652,12 +654,12 @@ public final class Renderer {
         gc.strokeOval(u.x - r, u.y - r, r * 2.0, r * 2.0);
 
         double baseY = u.y - r;
-        double[] xs = new double[]{u.x, u.x - NECRO_HOOD_W / 2.0, u.x + NECRO_HOOD_W / 2.0};
-        double[] ys = new double[]{baseY - NECRO_HOOD_H, baseY, baseY};
+        polyX3[0] = u.x; polyX3[1] = u.x - NECRO_HOOD_W / 2.0; polyX3[2] = u.x + NECRO_HOOD_W / 2.0;
+        polyY3[0] = baseY - NECRO_HOOD_H; polyY3[1] = baseY; polyY3[2] = baseY;
         gc.setFill(fill);
         gc.setStroke(stroke);
-        gc.fillPolygon(xs, ys, 3);
-        gc.strokePolygon(xs, ys, 3);
+        gc.fillPolygon(polyX3, polyY3, 3);
+        gc.strokePolygon(polyX3, polyY3, 3);
     }
 
     private void drawHealerUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
@@ -719,6 +721,7 @@ public final class Renderer {
         else { dirX /= mag; dirY /= mag; }
 
         gc.save();
+        gc.setFill(fill);
         for (int i = 1; i <= 4; i++) {
             double t = i * 3.0;
             double tx = u.x - dirX * t;
@@ -727,20 +730,19 @@ public final class Renderer {
             double sz = 3.0 - i * 0.5;
             if (alpha <= 0.0 || sz <= 0.5) continue;
             gc.setGlobalAlpha(alpha);
-            gc.setFill(fill);
             gc.fillOval(tx - sz / 2.0, ty - sz / 2.0, sz, sz);
         }
         gc.setGlobalAlpha(1.0);
         gc.restore();
 
         double half = 5.0;
-        double[] xs = new double[]{u.x, u.x + half, u.x, u.x - half};
-        double[] ys = new double[]{u.y - half, u.y, u.y + half, u.y};
+        polyX4[0] = u.x; polyX4[1] = u.x + half; polyX4[2] = u.x; polyX4[3] = u.x - half;
+        polyY4[0] = u.y - half; polyY4[1] = u.y; polyY4[2] = u.y + half; polyY4[3] = u.y;
         gc.setFill(ASSASSIN_FILL);
         gc.setStroke(ASSASSIN_STROKE);
         gc.setLineWidth(1.0);
-        gc.fillPolygon(xs, ys, 4);
-        gc.strokePolygon(xs, ys, 4);
+        gc.fillPolygon(polyX4, polyY4, 4);
+        gc.strokePolygon(polyX4, polyY4, 4);
 
         gc.setStroke(fill);
         gc.setLineWidth(2.0);
@@ -799,13 +801,13 @@ public final class Renderer {
         double perpY = dirX;
         double baseX = tipX - dirX * headLen;
         double baseY = tipY - dirY * headLen;
-        double[] xs = new double[]{tipX, baseX + perpX * 2.5, baseX - perpX * 2.5};
-        double[] ys = new double[]{tipY, baseY + perpY * 2.5, baseY - perpY * 2.5};
+        polyX3[0] = tipX; polyX3[1] = baseX + perpX * 2.5; polyX3[2] = baseX - perpX * 2.5;
+        polyY3[0] = tipY; polyY3[1] = baseY + perpY * 2.5; polyY3[2] = baseY - perpY * 2.5;
         gc.setFill(PIKE_HEAD_FILL);
         gc.setStroke(PIKE_SHAFT);
         gc.setLineWidth(1.0);
-        gc.fillPolygon(xs, ys, 3);
-        gc.strokePolygon(xs, ys, 3);
+        gc.fillPolygon(polyX3, polyY3, 3);
+        gc.strokePolygon(polyX3, polyY3, 3);
 
         gc.setLineWidth(1.5);
     }
@@ -829,10 +831,10 @@ public final class Renderer {
         gc.setLineWidth(1.0);
         for (int i = -1; i <= 1; i++) {
             double cx = u.x + i * (cw + 1.0);
-            double[] tx = new double[]{cx, cx - cw / 2.0, cx + cw / 2.0};
-            double[] ty = new double[]{cy - ch, cy, cy};
-            gc.fillPolygon(tx, ty, 3);
-            gc.strokePolygon(tx, ty, 3);
+            polyX3[0] = cx; polyX3[1] = cx - cw / 2.0; polyX3[2] = cx + cw / 2.0;
+            polyY3[0] = cy - ch; polyY3[1] = cy; polyY3[2] = cy;
+            gc.fillPolygon(polyX3, polyY3, 3);
+            gc.strokePolygon(polyX3, polyY3, 3);
         }
         gc.setLineWidth(1.5);
     }
@@ -856,13 +858,13 @@ public final class Renderer {
         double bodyRightX = u.x - perpX * (r * 0.7);
         double bodyRightY = u.y - perpY * (r * 0.7);
 
-        double[] bodyXs = new double[]{bodyTipX, bodyLeftX, bodyTailX, bodyRightX};
-        double[] bodyYs = new double[]{bodyTipY, bodyLeftY, bodyTailY, bodyRightY};
+        polyX4[0] = bodyTipX; polyX4[1] = bodyLeftX; polyX4[2] = bodyTailX; polyX4[3] = bodyRightX;
+        polyY4[0] = bodyTipY; polyY4[1] = bodyLeftY; polyY4[2] = bodyTailY; polyY4[3] = bodyRightY;
         gc.setFill(fill);
         gc.setStroke(stroke);
         gc.setLineWidth(2.0);
-        gc.fillPolygon(bodyXs, bodyYs, 4);
-        gc.strokePolygon(bodyXs, bodyYs, 4);
+        gc.fillPolygon(polyX4, polyY4, 4);
+        gc.strokePolygon(polyX4, polyY4, 4);
 
         double wingSpan = r * 1.6;
         double wingBackX = u.x - dirX * (r * 0.2);
@@ -870,21 +872,32 @@ public final class Renderer {
         double wingFrontX = u.x + dirX * (r * 0.4);
         double wingFrontY = u.y + dirY * (r * 0.4);
 
-        double[] leftWingXs = new double[]{wingFrontX, wingBackX, u.x + perpX * wingSpan};
-        double[] leftWingYs = new double[]{wingFrontY, wingBackY, u.y + perpY * wingSpan};
-        double[] rightWingXs = new double[]{wingFrontX, wingBackX, u.x - perpX * wingSpan};
-        double[] rightWingYs = new double[]{wingFrontY, wingBackY, u.y - perpY * wingSpan};
-        Color wingFill = fill.deriveColor(0, 1.0, 0.7, 0.85);
+        Color wingFill = dragonWingFor(fill);
         gc.setFill(wingFill);
         gc.setStroke(stroke);
-        gc.fillPolygon(leftWingXs, leftWingYs, 3);
-        gc.strokePolygon(leftWingXs, leftWingYs, 3);
-        gc.fillPolygon(rightWingXs, rightWingYs, 3);
-        gc.strokePolygon(rightWingXs, rightWingYs, 3);
+        polyX3[0] = wingFrontX; polyX3[1] = wingBackX; polyX3[2] = u.x + perpX * wingSpan;
+        polyY3[0] = wingFrontY; polyY3[1] = wingBackY; polyY3[2] = u.y + perpY * wingSpan;
+        gc.fillPolygon(polyX3, polyY3, 3);
+        gc.strokePolygon(polyX3, polyY3, 3);
+        polyX3[2] = u.x - perpX * wingSpan;
+        polyY3[2] = u.y - perpY * wingSpan;
+        gc.fillPolygon(polyX3, polyY3, 3);
+        gc.strokePolygon(polyX3, polyY3, 3);
 
         gc.setFill(DRAGON_EYE);
         gc.fillOval(bodyTipX - 2.0, bodyTipY - 2.0, 4.0, 4.0);
         gc.setLineWidth(1.5);
+    }
+
+    private Color dragonWingFor(Color fill) {
+        if (fill == dragonWingK0) return dragonWingV0;
+        if (fill == dragonWingK1) return dragonWingV1;
+        Color derived = fill.deriveColor(0, 1.0, 0.7, 0.85);
+        dragonWingK1 = dragonWingK0;
+        dragonWingV1 = dragonWingV0;
+        dragonWingK0 = fill;
+        dragonWingV0 = derived;
+        return derived;
     }
 
     private void drawProjectiles(GraphicsContext gc, List<Projectile> projectiles) {
@@ -928,6 +941,7 @@ public final class Renderer {
         gc.restore();
 
         gc.save();
+        gc.setFill(BOULDER_TRAIL);
         for (int i = 1; i <= 5; i++) {
             double t = i * 6.0;
             double tx = p.x - dirX * t;
@@ -936,7 +950,6 @@ public final class Renderer {
             double sz = 6.0 - i * 0.8;
             if (alpha <= 0.0 || sz <= 0.5) continue;
             gc.setGlobalAlpha(alpha);
-            gc.setFill(BOULDER_TRAIL);
             gc.fillOval(tx - sz / 2.0, ty - sz / 2.0, sz, sz);
         }
         gc.setGlobalAlpha(1.0);
@@ -951,7 +964,6 @@ public final class Renderer {
         gc.setLineWidth(1.5);
         gc.fillOval(-BOULDER_R, -BOULDER_R, BOULDER_R * 2.0, BOULDER_R * 2.0);
         gc.strokeOval(-BOULDER_R, -BOULDER_R, BOULDER_R * 2.0, BOULDER_R * 2.0);
-        gc.setStroke(BOULDER_STROKE);
         gc.setLineWidth(1.0);
         gc.strokeLine(-BOULDER_R * 0.6, -1.0, BOULDER_R * 0.4, 2.0);
         gc.strokeLine(-BOULDER_R * 0.2, BOULDER_R * 0.5, BOULDER_R * 0.5, -BOULDER_R * 0.3);
@@ -976,18 +988,14 @@ public final class Renderer {
         double baseX = p.x - dirX * ARROW_HEAD;
         double baseY = p.y - dirY * ARROW_HEAD;
         double half = ARROW_HEAD / 2.0;
-        double[] xs = new double[]{
-                p.x,
-                baseX + perpX * half,
-                baseX - perpX * half
-        };
-        double[] ys = new double[]{
-                p.y,
-                baseY + perpY * half,
-                baseY - perpY * half
-        };
+        polyX3[0] = p.x;
+        polyX3[1] = baseX + perpX * half;
+        polyX3[2] = baseX - perpX * half;
+        polyY3[0] = p.y;
+        polyY3[1] = baseY + perpY * half;
+        polyY3[2] = baseY - perpY * half;
         gc.setFill(ARROW_COLOR);
-        gc.fillPolygon(xs, ys, 3);
+        gc.fillPolygon(polyX3, polyY3, 3);
     }
 
     private void drawFireball(GraphicsContext gc, Projectile p) {
