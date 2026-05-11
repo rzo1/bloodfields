@@ -379,6 +379,20 @@
             <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
+
+        <!--
+            Headless JavaFX backend for tests. Several UI tests boot JavaFX via
+            Platform.startup(...) and would otherwise hang on display-less CI
+            runners (Ubuntu without an X server). Monocle provides the
+            Headless platform implementation; the surefire systemPropertyVariables
+            below pick it up.
+        -->
+        <dependency>
+            <groupId>org.pdfsam</groupId>
+            <artifactId>javafx-monocle</artifactId>
+            <version>21</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -387,6 +401,24 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <!-- Safety net: any future test hang fails the build in minutes, not hours. -->
+                    <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
+                    <systemPropertyVariables>
+                        <!--
+                            Run JavaFX-touching tests through Monocle in Headless mode so
+                            display-less CI runners (Ubuntu without X) don't hang inside
+                            Platform.startup(...). javafx-monocle is on the test classpath.
+                        -->
+                        <java.awt.headless>true</java.awt.headless>
+                        <glass.platform>Monocle</glass.platform>
+                        <monocle.platform>Headless</monocle.platform>
+                        <prism.order>sw</prism.order>
+                        <prism.text>t2k</prism.text>
+                        <javafx.platform>monocle</javafx.platform>
+                        <testfx.headless>true</testfx.headless>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>io.github.git-commit-id</groupId>
