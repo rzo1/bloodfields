@@ -13,6 +13,8 @@ public final class HandoverRenderer {
     private static final Color HINT = Color.web(Theme.TEXT_DIM);
     private static final Color SHADOW = Color.rgb(0, 0, 0, 0.7);
     private static final Color ACCENT = Color.web(Theme.TEXT_ACCENT);
+    private static final Font HEADLINE_FONT = Font.font("Georgia", FontWeight.BOLD, 40);
+    private static final Font HINT_FONT = Font.font("Georgia", 18);
 
     public void render(GraphicsContext g, double w, double h, String message, String hint) {
         g.save();
@@ -28,8 +30,7 @@ public final class HandoverRenderer {
         g.strokeLine(cx - 220, cy - 60, cx + 220, cy - 60);
         g.strokeLine(cx - 220, cy + 70, cx + 220, cy + 70);
 
-        Font headline = Font.font("Georgia", FontWeight.BOLD, 40);
-        g.setFont(headline);
+        g.setFont(HEADLINE_FONT);
         g.setFill(SHADOW);
         if (message != null) {
             g.fillText(message, cx + 3, cy - 10 + 3);
@@ -40,7 +41,7 @@ public final class HandoverRenderer {
         }
 
         if (hint != null) {
-            g.setFont(Font.font("Georgia", 18));
+            g.setFont(HINT_FONT);
             g.setFill(HINT);
             g.fillText(hint, cx, cy + 40);
         }

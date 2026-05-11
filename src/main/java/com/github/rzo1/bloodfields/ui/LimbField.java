@@ -46,7 +46,9 @@ public final class LimbField {
             double rot = random.nextDouble() * Math.PI * 2.0;
             double size = 2.0 + random.nextDouble() * 3.0;
             if (limbs.size() >= MAX_LIMBS) {
-                limbs.remove(0);
+                int last = limbs.size() - 1;
+                limbs.set(0, limbs.get(last));
+                limbs.remove(last);
             }
             limbs.add(new LimbDebris(x + dx, y + dy, rot, size, faction));
         }
@@ -57,23 +59,51 @@ public final class LimbField {
             return;
         }
         AssetLoader assets = AssetLoader.get();
+        double zoom = camera != null ? camera.zoom : 1.0;
+        if (zoom <= 0.0) zoom = 1.0;
+        double ox = camera != null ? camera.offsetX : 0.0;
+        double oy = camera != null ? camera.offsetY : 0.0;
+        double canvasW = gc.getCanvas().getWidth();
+        double canvasH = gc.getCanvas().getHeight();
+        double margin = 16.0;
+        double viewMinX = (-ox) / zoom - margin;
+        double viewMinY = (-oy) / zoom - margin;
+        double viewMaxX = (canvasW - ox) / zoom + margin;
+        double viewMaxY = (canvasH - oy) / zoom + margin;
+
         gc.save();
         if (camera != null) {
             camera.apply(gc);
         }
-        for (LimbDebris d : limbs) {
+        gc.setFill(LIMB_FILL);
+        gc.setLineWidth(0.5);
+        Faction lastFaction = null;
+        int size = limbs.size();
+        for (int i = 0; i < size; i++) {
+            LimbDebris d = limbs.get(i);
             if (d == null) {
                 continue;
             }
+            double dx = d.x();
+            double dy = d.y();
+            double ds = d.size();
+            if (dx + ds < viewMinX || dx - ds > viewMaxX
+                    || dy + ds < viewMinY || dy - ds > viewMaxY) {
+                continue;
+            }
+            Faction f = d.faction();
+            if (f != lastFaction) {
+                gc.setStroke(assets.factionStroke(f));
+                lastFaction = f;
+            }
             gc.save();
-            gc.translate(d.x(), d.y());
+            gc.translate(dx, dy);
             gc.rotate(Math.toDegrees(d.rotation()));
-            double half = d.size() / 2.0;
-            gc.setFill(LIMB_FILL);
-            gc.fillRect(-half, -half * 0.5, d.size(), d.size() * 0.5);
-            gc.setStroke(assets.factionStroke(d.faction()));
-            gc.setLineWidth(0.5);
-            gc.strokeRect(-half, -half * 0.5, d.size(), d.size() * 0.5);
+            double half = ds / 2.0;
+            double halfH = ds * 0.5;
+            double topY = -half * 0.5;
+            gc.fillRect(-half, topY, ds, halfH);
+            gc.strokeRect(-half, topY, ds, halfH);
             gc.restore();
         }
         gc.restore();

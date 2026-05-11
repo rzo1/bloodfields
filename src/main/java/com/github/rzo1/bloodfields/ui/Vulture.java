@@ -22,6 +22,11 @@ public final class Vulture {
 
     private static final Color BODY = Color.web("#0a0a0a");
 
+    private final double[] wingXsL = new double[3];
+    private final double[] wingYsL = new double[3];
+    private final double[] wingXsR = new double[3];
+    private final double[] wingYsR = new double[3];
+
     private boolean active;
     private double cx;
     private double cy;
@@ -194,12 +199,12 @@ public final class Vulture {
         } else {
             double flap = Math.sin(angle * 3.0);
             double wingY = y - 3.0 + (flap > 0 ? -3.0 : 1.0);
-            double[] xsL = {x - 6.0, x - 12.0, x - 3.0};
-            double[] ysL = {y, wingY, y};
-            double[] xsR = {x + 6.0, x + 12.0, x + 3.0};
-            double[] ysR = {y, wingY, y};
-            gc.fillPolygon(xsL, ysL, 3);
-            gc.fillPolygon(xsR, ysR, 3);
+            wingXsL[0] = x - 6.0; wingXsL[1] = x - 12.0; wingXsL[2] = x - 3.0;
+            wingYsL[0] = y;       wingYsL[1] = wingY;    wingYsL[2] = y;
+            wingXsR[0] = x + 6.0; wingXsR[1] = x + 12.0; wingXsR[2] = x + 3.0;
+            wingYsR[0] = y;       wingYsR[1] = wingY;    wingYsR[2] = y;
+            gc.fillPolygon(wingXsL, wingYsL, 3);
+            gc.fillPolygon(wingXsR, wingYsR, 3);
         }
         gc.restore();
     }

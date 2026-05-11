@@ -6,7 +6,6 @@ import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 public final class RagdollOverlay {
@@ -33,6 +32,8 @@ public final class RagdollOverlay {
     }
 
     private final List<Ragdoll> ragdolls = new ArrayList<>();
+    private static final double[] TRIANGLE_XS = {0, -7.0, 7.0};
+    private static final double[] TRIANGLE_YS = {-9.0, 9.0, 9.0};
 
     public void recordDeath(double x, double y, double rotation,
                             Faction faction, UnitType type) {
@@ -43,11 +44,16 @@ public final class RagdollOverlay {
         if (dt <= 0.0) {
             return;
         }
-        for (Iterator<Ragdoll> it = ragdolls.iterator(); it.hasNext(); ) {
-            Ragdoll r = it.next();
+        int n = ragdolls.size();
+        for (int i = 0; i < n; i++) {
+            Ragdoll r = ragdolls.get(i);
             r.age += dt;
             if (r.age >= LIFETIME_SECONDS) {
-                it.remove();
+                int last = n - 1;
+                ragdolls.set(i, ragdolls.get(last));
+                ragdolls.remove(last);
+                i--;
+                n--;
             }
         }
     }
@@ -69,37 +75,53 @@ public final class RagdollOverlay {
             return;
         }
         AssetLoader assets = AssetLoader.get();
+        double zoom = camera != null ? camera.zoom : 1.0;
+        if (zoom <= 0.0) zoom = 1.0;
+        double ox = camera != null ? camera.offsetX : 0.0;
+        double oy = camera != null ? camera.offsetY : 0.0;
+        double canvasW = gc.getCanvas().getWidth();
+        double canvasH = gc.getCanvas().getHeight();
+        double margin = 24.0;
+        double viewMinX = (-ox) / zoom - margin;
+        double viewMinY = (-oy) / zoom - margin;
+        double viewMaxX = (canvasW - ox) / zoom + margin;
+        double viewMaxY = (canvasH - oy) / zoom + margin;
+
         gc.save();
         if (camera != null) {
             camera.apply(gc);
         }
-        for (Ragdoll r : ragdolls) {
+        Color lastFill = null;
+        int n = ragdolls.size();
+        for (int i = 0; i < n; i++) {
+            Ragdoll r = ragdolls.get(i);
+            if (r.x < viewMinX || r.x > viewMaxX || r.y < viewMinY || r.y > viewMaxY) {
+                continue;
+            }
             double t = r.age / LIFETIME_SECONDS;
             double alpha = Math.max(0.0, 0.9 * (1.0 - t));
             gc.setGlobalAlpha(alpha);
             Color fill = assets.factionFill(r.faction);
+            if (fill != lastFill) {
+                gc.setFill(fill);
+                lastFill = fill;
+            }
             gc.save();
             gc.translate(r.x, r.y);
             gc.rotate(Math.toDegrees(r.rotation));
             UnitShape shape = Renderer.shapeFor(r.type);
-            drawShape(gc, shape, fill);
+            drawShape(gc, shape);
             gc.restore();
         }
         gc.setGlobalAlpha(1.0);
         gc.restore();
     }
 
-    private static void drawShape(GraphicsContext gc, UnitShape shape, Color fill) {
-        gc.setFill(fill);
+    private static void drawShape(GraphicsContext gc, UnitShape shape) {
         switch (shape) {
-            case TRIANGLE: {
-                double halfW = 7.0;
-                double halfH = 9.0;
-                double[] xs = {0, -halfW, halfW};
-                double[] ys = {-halfH, halfH, halfH};
-                gc.fillPolygon(xs, ys, 3);
+            case TRIANGLE:
+                gc.fillPolygon(TRIANGLE_XS, TRIANGLE_YS, 3);
                 break;
-            }
             case HORIZONTAL_RECT:
                 gc.fillRoundRect(-12.0, -6.0, 24.0, 12.0, 4.0, 4.0);
                 break;

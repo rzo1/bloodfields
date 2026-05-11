@@ -79,21 +79,43 @@ public final class BloodyTiles {
         if (deathsPerTile.isEmpty() || tileSize <= 0.0) {
             return;
         }
+        double zoom = camera != null ? camera.zoom : 1.0;
+        if (zoom <= 0.0) zoom = 1.0;
+        double ox = camera != null ? camera.offsetX : 0.0;
+        double oy = camera != null ? camera.offsetY : 0.0;
+        double canvasW = gc.getCanvas().getWidth();
+        double canvasH = gc.getCanvas().getHeight();
+        double viewMinX = (-ox) / zoom - tileSize;
+        double viewMinY = (-oy) / zoom - tileSize;
+        double viewMaxX = (canvasW - ox) / zoom + tileSize;
+        double viewMaxY = (canvasH - oy) / zoom + tileSize;
+
         gc.save();
         if (camera != null) {
             camera.apply(gc);
         }
         gc.setFill(STAIN);
+        double lastAlpha = -1.0;
         for (Map.Entry<Long, Integer> e : deathsPerTile.entrySet()) {
             int count = e.getValue();
             if (count <= 0) {
                 continue;
             }
-            int col = colOf(e.getKey());
-            int row = rowOf(e.getKey());
+            long k = e.getKey();
+            int col = colOf(k);
+            int row = rowOf(k);
+            double x0 = col * tileSize;
+            double y0 = row * tileSize;
+            if (x0 + tileSize < viewMinX || x0 > viewMaxX
+                    || y0 + tileSize < viewMinY || y0 > viewMaxY) {
+                continue;
+            }
             double alpha = Math.min(MAX_ALPHA, count * ALPHA_PER_DEATH);
-            gc.setGlobalAlpha(alpha);
-            gc.fillRect(col * tileSize, row * tileSize, tileSize, tileSize);
+            if (alpha != lastAlpha) {
+                gc.setGlobalAlpha(alpha);
+                lastAlpha = alpha;
+            }
+            gc.fillRect(x0, y0, tileSize, tileSize);
         }
         gc.setFill(BONE);
         gc.setGlobalAlpha(BONE_ALPHA);
@@ -102,7 +124,16 @@ public final class BloodyTiles {
             if (count < BONE_PILE_THRESHOLD) {
                 continue;
             }
-            drawBonePile(gc, e.getKey(), count, tileSize);
+            long k = e.getKey();
+            int col = colOf(k);
+            int row = rowOf(k);
+            double x0 = col * tileSize;
+            double y0 = row * tileSize;
+            if (x0 + tileSize < viewMinX || x0 > viewMaxX
+                    || y0 + tileSize < viewMinY || y0 > viewMaxY) {
+                continue;
+            }
+            drawBonePile(gc, k, count, tileSize);
         }
         gc.setGlobalAlpha(SKULL_ALPHA);
         for (Map.Entry<Long, Integer> e : deathsPerTile.entrySet()) {
@@ -110,7 +141,16 @@ public final class BloodyTiles {
             if (count < SKULL_PILE_THRESHOLD) {
                 continue;
             }
-            drawSkullPile(gc, e.getKey(), count, tileSize);
+            long k = e.getKey();
+            int col = colOf(k);
+            int row = rowOf(k);
+            double x0 = col * tileSize;
+            double y0 = row * tileSize;
+            if (x0 + tileSize < viewMinX || x0 > viewMaxX
+                    || y0 + tileSize < viewMinY || y0 > viewMaxY) {
+                continue;
+            }
+            drawSkullPile(gc, k, count, tileSize);
         }
         gc.setGlobalAlpha(1.0);
         gc.restore();
