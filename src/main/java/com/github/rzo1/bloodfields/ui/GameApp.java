@@ -138,6 +138,7 @@ public class GameApp extends Application {
         handoverRenderer = new HandoverRenderer();
         sounds = new SoundService();
         particles = new ParticleSystem();
+        fpsOverlay.setParticles(particles);
         deathTracker = new DeathTracker();
         hitTracker = new HitTracker();
         bloodyTiles = new BloodyTiles();
@@ -484,6 +485,7 @@ public class GameApp extends Application {
         Army blue = new Army(Faction.BLUE, 0);
         state = new GameState(world, red, blue, grid);
         state.phase = GameState.Phase.MAIN_MENU;
+        fpsOverlay.setState(state);
         if (hud != null) {
             root.setLeft(null);
             hud = null;
@@ -512,6 +514,7 @@ public class GameApp extends Application {
         state = new GameState(world, red, blue, grid);
         state.phase = GameState.Phase.DEPLOYMENT;
         loop = new GameLoop(state, new UnitAI());
+        fpsOverlay.setState(state);
         populateStructuresForCampaignLevel(level);
 
         Army playerArmy = state.armyOf(PLAYER_FACTION);
@@ -879,6 +882,7 @@ public class GameApp extends Application {
         state = new GameState(world, red, blue, grid);
         state.phase = GameState.Phase.DEPLOYMENT;
         loop = new GameLoop(state, new UnitAI());
+        fpsOverlay.setState(state);
         populateStructuresForCurrentMap();
     }
 
