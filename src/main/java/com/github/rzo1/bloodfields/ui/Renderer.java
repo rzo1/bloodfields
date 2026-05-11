@@ -90,6 +90,28 @@ public final class Renderer {
     private static final double VETERAN_STAR_DY = 18.0;
     private static final double VETERAN_STAR_R = 2.0;
 
+    private static final Color HEALER_BODY = Color.web("#3dff80");
+    private static final Color HEALER_CROSS = Color.web("#ffffff");
+    private static final Color CATAPULT_FRAME_FILL = Color.web("#5a3d1c");
+    private static final Color CATAPULT_FRAME_STROKE = Color.web("#2a1d0c");
+    private static final Color CATAPULT_WHEEL = Color.web("#1a1108");
+    private static final Color CATAPULT_ARM = Color.web("#3a2510");
+    private static final Color CATAPULT_LOAD_FILL = Color.web("#7a6a55");
+    private static final Color CATAPULT_LOAD_STROKE = Color.web("#3a2520");
+    private static final Color ASSASSIN_FILL = Color.web("#1a1a1a");
+    private static final Color ASSASSIN_STROKE = Color.web("#0a0a0a");
+    private static final Color GOLEM_FILL = Color.web("#3a3a3a");
+    private static final Color GOLEM_STROKE = Color.web("#1a1a1a");
+    private static final Color GOLEM_GEM_STROKE = Color.web("#0a0a0a");
+    private static final Color PIKE_SHAFT = Color.web("#3a2a18");
+    private static final Color PIKE_HEAD_FILL = Color.web("#a09080");
+    private static final Color CROWN_STROKE = Color.web("#7a5a10");
+    private static final Color DRAGON_EYE = Color.web("#1a0a00");
+
+    private static final double UNIT_CULL_MARGIN = 36.0;
+    private static final double POOL_CULL_MARGIN = 32.0;
+    private static final int VIGNETTE_CASUALTY_BUCKET = 4;
+
     private final AssetLoader assets = AssetLoader.get();
     private final CorpseRenderer corpseRenderer = new CorpseRenderer();
     private final StructureRenderer structureRenderer = new StructureRenderer();
@@ -102,6 +124,13 @@ public final class Renderer {
     private GameState auraState;
     private double auraSimTime;
     private StructureField structureField;
+
+    private RadialGradient cachedVignette;
+    private int cachedVignetteCasualtyBucket = -1;
+    private double cachedVignetteWidth = -1.0;
+    private double cachedVignetteHeight = -1.0;
+
+    private double viewMinX, viewMinY, viewMaxX, viewMaxY;
 
     public void setAuraContext(GameState state, double simTime) {
         this.auraState = state;
@@ -220,6 +249,8 @@ public final class Renderer {
             gc.translate(sx, sy);
         }
 
+        updateViewportBounds(camera, width, height, tileSize);
+
         gc.save();
         gc.setFill(GRASS);
         gc.fillRect(0, 0, width, height);
@@ -334,17 +365,48 @@ public final class Renderer {
         return corpseRenderer;
     }
 
+    private void updateViewportBounds(Camera camera, double width, double height, double tileSize) {
+        double zoom = camera != null ? camera.zoom : 1.0;
+        if (zoom <= 0.0) zoom = 1.0;
+        double ox = camera != null ? camera.offsetX : 0.0;
+        double oy = camera != null ? camera.offsetY : 0.0;
+        double margin = tileSize > 0.0 ? tileSize : 32.0;
+        viewMinX = (-ox) / zoom - margin;
+        viewMinY = (-oy) / zoom - margin;
+        viewMaxX = (width - ox) / zoom + margin;
+        viewMaxY = (height - oy) / zoom + margin;
+    }
+
+    private boolean aabbInView(double minX, double minY, double maxX, double maxY) {
+        return maxX >= viewMinX && minX <= viewMaxX
+                && maxY >= viewMinY && minY <= viewMaxY;
+    }
+
+    private boolean unitInView(Unit u, double margin) {
+        return aabbInView(u.x - margin, u.y - margin, u.x + margin, u.y + margin);
+    }
+
     private void paintVignette(GraphicsContext gc, double width, double height, int casualties) {
-        double mult = Math.min(DIM_MAX_MULT, 1.0 + DIM_PER_CASUALTY * Math.max(0, casualties));
-        double outerAlpha = Math.min(1.0, VIGNETTE_BASE_ALPHA * mult);
-        double midAlpha = Math.min(1.0, VIGNETTE_MID_ALPHA * mult);
-        RadialGradient grad = new RadialGradient(
-                0, 0, 0.5, 0.5, 0.75, true, CycleMethod.NO_CYCLE,
-                new Stop(0.0, Color.rgb(0, 0, 0, 0.0)),
-                new Stop(0.6, Color.rgb(0, 0, 0, midAlpha)),
-                new Stop(1.0, Color.rgb(0, 0, 0, outerAlpha)));
+        int bucket = Math.max(0, casualties) / VIGNETTE_CASUALTY_BUCKET;
+        if (cachedVignette == null
+                || bucket != cachedVignetteCasualtyBucket
+                || width != cachedVignetteWidth
+                || height != cachedVignetteHeight) {
+            double mult = Math.min(DIM_MAX_MULT,
+                    1.0 + DIM_PER_CASUALTY * (bucket * VIGNETTE_CASUALTY_BUCKET));
+            double outerAlpha = Math.min(1.0, VIGNETTE_BASE_ALPHA * mult);
+            double midAlpha = Math.min(1.0, VIGNETTE_MID_ALPHA * mult);
+            cachedVignette = new RadialGradient(
+                    0, 0, 0.5, 0.5, 0.75, true, CycleMethod.NO_CYCLE,
+                    new Stop(0.0, Color.rgb(0, 0, 0, 0.0)),
+                    new Stop(0.6, Color.rgb(0, 0, 0, midAlpha)),
+                    new Stop(1.0, Color.rgb(0, 0, 0, outerAlpha)));
+            cachedVignetteCasualtyBucket = bucket;
+            cachedVignetteWidth = width;
+            cachedVignetteHeight = height;
+        }
         gc.save();
-        gc.setFill(grad);
+        gc.setFill(cachedVignette);
         gc.fillRect(0, 0, width, height);
         gc.restore();
     }
@@ -375,9 +437,15 @@ public final class Renderer {
             if (pool == null || pool.maxAge <= 0.0) {
                 continue;
             }
+            double r = pool.radius;
+            double extentX = r + POOL_CULL_MARGIN;
+            double extentY = r * 0.55 + POOL_CULL_MARGIN;
+            if (!aabbInView(pool.x - extentX, pool.y - extentY,
+                    pool.x + extentX, pool.y + extentY)) {
+                continue;
+            }
             double t = Math.max(0.0, Math.min(1.0, pool.age / pool.maxAge));
             double alpha = Math.max(0.15, Math.min(0.6, 1.0 - t));
-            double r = pool.radius;
             gc.save();
             gc.setGlobalAlpha(alpha);
             gc.setFill(POOL_FILL);
@@ -420,6 +488,9 @@ public final class Renderer {
             if (u == null || u.state == UnitState.DEAD) {
                 continue;
             }
+            if (!unitInView(u, UNIT_CULL_MARGIN)) {
+                continue;
+            }
             gc.fillOval(u.x - SHADOW_W / 2.0, u.y + SHADOW_DY - SHADOW_H / 2.0, SHADOW_W, SHADOW_H);
         }
     }
@@ -431,6 +502,9 @@ public final class Renderer {
         gc.setLineWidth(1.5);
         for (Unit u : units) {
             if (u == null || u.state == UnitState.DEAD) {
+                continue;
+            }
+            if (!unitInView(u, UNIT_CULL_MARGIN)) {
                 continue;
             }
             drawVeteranTrim(gc, u);
@@ -482,23 +556,18 @@ public final class Renderer {
 
     private void drawVeteranTrim(GraphicsContext gc, Unit u) {
         if (u.veteranRank <= 0) return;
-        double width = u.veteranRank >= 2 ? 2.0 : 1.0;
-        gc.save();
         gc.setStroke(VETERAN_TRIM);
-        gc.setLineWidth(width);
+        gc.setLineWidth(u.veteranRank >= 2 ? 2.0 : 1.0);
         gc.strokeOval(u.x - VETERAN_TRIM_RADIUS, u.y - VETERAN_TRIM_RADIUS,
                 VETERAN_TRIM_RADIUS * 2.0, VETERAN_TRIM_RADIUS * 2.0);
-        gc.restore();
         gc.setLineWidth(1.5);
     }
 
     private void drawVeteranStar(GraphicsContext gc, Unit u) {
         if (u.veteranRank < 3) return;
-        gc.save();
         gc.setFill(VETERAN_TRIM);
         gc.fillOval(u.x - VETERAN_STAR_R, u.y - VETERAN_STAR_DY - VETERAN_STAR_R,
                 VETERAN_STAR_R * 2.0, VETERAN_STAR_R * 2.0);
-        gc.restore();
     }
 
     private void drawSquareUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
@@ -593,13 +662,13 @@ public final class Renderer {
 
     private void drawHealerUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
         double r = 9.0;
-        gc.setFill(Color.web("#3dff80"));
+        gc.setFill(HEALER_BODY);
         gc.setStroke(stroke);
         gc.setLineWidth(1.5);
         gc.fillOval(u.x - r, u.y - r, r * 2.0, r * 2.0);
         gc.strokeOval(u.x - r, u.y - r, r * 2.0, r * 2.0);
 
-        gc.setStroke(Color.web("#ffffff"));
+        gc.setStroke(HEALER_CROSS);
         gc.setLineWidth(3.0);
         double half = 6.0;
         gc.strokeLine(u.x - half, u.y, u.x + half, u.y);
@@ -610,14 +679,14 @@ public final class Renderer {
     private void drawCatapultUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
         double bw = 28.0;
         double bh = 12.0;
-        gc.setFill(Color.web("#5a3d1c"));
-        gc.setStroke(Color.web("#2a1d0c"));
+        gc.setFill(CATAPULT_FRAME_FILL);
+        gc.setStroke(CATAPULT_FRAME_STROKE);
         gc.setLineWidth(2.0);
         gc.fillRoundRect(u.x - bw / 2.0, u.y - bh / 2.0, bw, bh, 3.0, 3.0);
         gc.strokeRoundRect(u.x - bw / 2.0, u.y - bh / 2.0, bw, bh, 3.0, 3.0);
 
         double wheelR = 3.5;
-        gc.setFill(Color.web("#1a1108"));
+        gc.setFill(CATAPULT_WHEEL);
         gc.fillOval(u.x - bw / 2.0 + 2.0, u.y + bh / 2.0 - 1.0, wheelR * 2.0, wheelR * 2.0);
         gc.fillOval(u.x + bw / 2.0 - 2.0 - wheelR * 2.0, u.y + bh / 2.0 - 1.0, wheelR * 2.0, wheelR * 2.0);
 
@@ -625,13 +694,13 @@ public final class Renderer {
         double armBaseY = u.y - bh / 2.0;
         double armTipX = u.x + bw / 2.0 - 2.0;
         double armTipY = u.y - 18.0;
-        gc.setStroke(Color.web("#3a2510"));
+        gc.setStroke(CATAPULT_ARM);
         gc.setLineWidth(4.0);
         gc.strokeLine(armBaseX, armBaseY, armTipX, armTipY);
 
         double loadR = 3.0;
-        gc.setFill(Color.web("#7a6a55"));
-        gc.setStroke(Color.web("#3a2520"));
+        gc.setFill(CATAPULT_LOAD_FILL);
+        gc.setStroke(CATAPULT_LOAD_STROKE);
         gc.setLineWidth(1.0);
         gc.fillOval(armTipX - loadR, armTipY - loadR, loadR * 2.0, loadR * 2.0);
         gc.strokeOval(armTipX - loadR, armTipY - loadR, loadR * 2.0, loadR * 2.0);
@@ -667,8 +736,8 @@ public final class Renderer {
         double half = 5.0;
         double[] xs = new double[]{u.x, u.x + half, u.x, u.x - half};
         double[] ys = new double[]{u.y - half, u.y, u.y + half, u.y};
-        gc.setFill(Color.web("#1a1a1a"));
-        gc.setStroke(Color.web("#0a0a0a"));
+        gc.setFill(ASSASSIN_FILL);
+        gc.setStroke(ASSASSIN_STROKE);
         gc.setLineWidth(1.0);
         gc.fillPolygon(xs, ys, 4);
         gc.strokePolygon(xs, ys, 4);
@@ -682,20 +751,20 @@ public final class Renderer {
     private void drawGolemUnit(GraphicsContext gc, Unit u, Color fill, Color stroke) {
         double size = 24.0;
         double half = size / 2.0;
-        gc.setFill(Color.web("#3a3a3a"));
-        gc.setStroke(Color.web("#1a1a1a"));
+        gc.setFill(GOLEM_FILL);
+        gc.setStroke(GOLEM_STROKE);
         gc.setLineWidth(3.0);
         gc.fillRect(u.x - half, u.y - half, size, size);
         gc.strokeRect(u.x - half, u.y - half, size, size);
 
         double gemR = 2.5;
         gc.setFill(fill);
-        gc.setStroke(Color.web("#0a0a0a"));
+        gc.setStroke(GOLEM_GEM_STROKE);
         gc.setLineWidth(1.0);
         gc.fillOval(u.x - gemR, u.y - gemR, gemR * 2.0, gemR * 2.0);
         gc.strokeOval(u.x - gemR, u.y - gemR, gemR * 2.0, gemR * 2.0);
 
-        gc.setStroke(Color.web("#1a1a1a"));
+        gc.setStroke(GOLEM_STROKE);
         gc.setLineWidth(1.0);
         gc.strokeLine(u.x - half + 6.0, u.y - half, u.x - half + 6.0, u.y - half + 4.0);
         gc.strokeLine(u.x + half - 6.0, u.y + half, u.x + half - 6.0, u.y + half - 4.0);
@@ -721,7 +790,7 @@ public final class Renderer {
         double startY = u.y + dirY * bodyHalf;
         double tipX = u.x + dirX * (bodyHalf + pikeLen);
         double tipY = u.y + dirY * (bodyHalf + pikeLen);
-        gc.setStroke(Color.web("#3a2a18"));
+        gc.setStroke(PIKE_SHAFT);
         gc.setLineWidth(4.0);
         gc.strokeLine(startX, startY, tipX, tipY);
 
@@ -732,8 +801,8 @@ public final class Renderer {
         double baseY = tipY - dirY * headLen;
         double[] xs = new double[]{tipX, baseX + perpX * 2.5, baseX - perpX * 2.5};
         double[] ys = new double[]{tipY, baseY + perpY * 2.5, baseY - perpY * 2.5};
-        gc.setFill(Color.web("#a09080"));
-        gc.setStroke(Color.web("#3a2a18"));
+        gc.setFill(PIKE_HEAD_FILL);
+        gc.setStroke(PIKE_SHAFT);
         gc.setLineWidth(1.0);
         gc.fillPolygon(xs, ys, 3);
         gc.strokePolygon(xs, ys, 3);
@@ -745,13 +814,13 @@ public final class Renderer {
         double size = 22.0;
         double half = size / 2.0;
         gc.setFill(fill);
-        gc.setStroke(Color.web("#ffd76b"));
+        gc.setStroke(VETERAN_TRIM);
         gc.setLineWidth(2.0);
         gc.fillRoundRect(u.x - half, u.y - half, size, size, 4.0, 4.0);
         gc.strokeRoundRect(u.x - half, u.y - half, size, size, 4.0, 4.0);
 
-        Color crownFill = Color.web("#ffd76b");
-        Color crownStroke = Color.web("#7a5a10");
+        Color crownFill = VETERAN_TRIM;
+        Color crownStroke = CROWN_STROKE;
         double cy = u.y - half - 1.0;
         double cw = 4.0;
         double ch = 6.0;
@@ -813,7 +882,7 @@ public final class Renderer {
         gc.fillPolygon(rightWingXs, rightWingYs, 3);
         gc.strokePolygon(rightWingXs, rightWingYs, 3);
 
-        gc.setFill(Color.web("#1a0a00"));
+        gc.setFill(DRAGON_EYE);
         gc.fillOval(bodyTipX - 2.0, bodyTipY - 2.0, 4.0, 4.0);
         gc.setLineWidth(1.5);
     }
@@ -941,6 +1010,9 @@ public final class Renderer {
             if (u == null || u.state == UnitState.DEAD) {
                 continue;
             }
+            if (!unitInView(u, UNIT_CULL_MARGIN)) {
+                continue;
+            }
             double max = u.maxHp > 0.0 ? u.maxHp : u.type.maxHp();
             if (max <= 0.0) {
                 continue;
@@ -955,15 +1027,19 @@ public final class Renderer {
         }
     }
 
+    private static final javafx.scene.text.Font ROUTED_FONT =
+            javafx.scene.text.Font.font("System", javafx.scene.text.FontWeight.BOLD, 12.0);
+
     private void drawRoutedIndicators(GraphicsContext gc, List<Unit> units) {
         if (units == null) {
             return;
         }
         gc.setFill(Color.WHITE);
-        gc.setFont(javafx.scene.text.Font.font("System", javafx.scene.text.FontWeight.BOLD, 12.0));
+        gc.setFont(ROUTED_FONT);
         for (Unit u : units) {
             if (u == null || u.state == UnitState.DEAD) continue;
             if (!u.routed) continue;
+            if (!unitInView(u, UNIT_CULL_MARGIN)) continue;
             gc.fillText("!", u.x - 2.0, u.y - HP_DY - 2.0);
         }
     }

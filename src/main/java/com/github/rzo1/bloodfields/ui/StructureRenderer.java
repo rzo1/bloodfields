@@ -24,13 +24,38 @@ public final class StructureRenderer {
     private static final Color HP_FULL = Color.web("#1faa3a");
     private static final Color HP_LOW = Color.web("#d83030");
 
+    private static final Color GATE_LABEL_OPEN = Color.web("#a8e055");
+    private static final Color GATE_LABEL_CLOSED = Color.web("#e0a855");
+    private static final javafx.scene.text.Font GATE_LABEL_FONT =
+            javafx.scene.text.Font.font("System", javafx.scene.text.FontWeight.BOLD, 9.0);
+
+    private static final Color MINI_HAT = Color.web("#f5f5f5");
+    private static final Color MINI_NECRO_BODY = Color.web("#2a1a35");
+    private static final Color MINI_HEALER_BODY = Color.web("#f8f8f8");
+    private static final Color MINI_ASSASSIN_FILL = Color.web("#1a1418");
+    private static final Color MINI_PIKE_STROKE = Color.web("#3a2a18");
+    private static final Color MINI_CROWN_FILL = Color.web("#f5c84a");
+    private static final Color MINI_CROWN_STROKE = Color.web("#7a5a10");
+
     private static final double HP_BAR_HEIGHT = 3.0;
     private static final double HP_BAR_PAD = 4.0;
+    private static final double STRUCTURE_CULL_MARGIN = 32.0;
 
     public void render(GraphicsContext gc, StructureField field, Camera camera) {
         if (field == null || field.structures().isEmpty()) {
             return;
         }
+        double zoom = camera != null ? camera.zoom : 1.0;
+        if (zoom <= 0.0) zoom = 1.0;
+        double ox = camera != null ? camera.offsetX : 0.0;
+        double oy = camera != null ? camera.offsetY : 0.0;
+        double canvasW = gc.getCanvas().getWidth();
+        double canvasH = gc.getCanvas().getHeight();
+        double viewMinX = (-ox) / zoom - STRUCTURE_CULL_MARGIN;
+        double viewMinY = (-oy) / zoom - STRUCTURE_CULL_MARGIN;
+        double viewMaxX = (canvasW - ox) / zoom + STRUCTURE_CULL_MARGIN;
+        double viewMaxY = (canvasH - oy) / zoom + STRUCTURE_CULL_MARGIN;
+
         gc.save();
         if (camera != null) {
             camera.apply(gc);
@@ -38,6 +63,10 @@ public final class StructureRenderer {
         gc.setLineWidth(2.0);
         for (Structure s : field.structures()) {
             if (s == null) continue;
+            if (s.x() + s.width() < viewMinX || s.x() > viewMaxX
+                    || s.y() + s.height() < viewMinY || s.y() > viewMaxY) {
+                continue;
+            }
             boolean destroyed = field.isDestroyed(s);
             switch (s.type()) {
                 case WALL:
@@ -125,7 +154,7 @@ public final class StructureRenderer {
                 double hatBase = cy - r * 0.5;
                 double[] hxs = {cx, cx - r * 0.6, cx + r * 0.6};
                 double[] hys = {hatBase - r * 0.9, hatBase, hatBase};
-                gc.setFill(Color.web("#f5f5f5"));
+                gc.setFill(MINI_HAT);
                 gc.fillPolygon(hxs, hys, 3);
                 gc.strokePolygon(hxs, hys, 3);
                 break;
@@ -149,7 +178,7 @@ public final class StructureRenderer {
             }
             case NECROMANCER: {
                 double r = half * 0.8;
-                gc.setFill(Color.web("#2a1a35"));
+                gc.setFill(MINI_NECRO_BODY);
                 gc.fillOval(cx - r, cy - r * 0.5, r * 2.0, r * 2.0);
                 gc.strokeOval(cx - r, cy - r * 0.5, r * 2.0, r * 2.0);
                 double hoodBase = cy - r * 0.5;
@@ -162,7 +191,7 @@ public final class StructureRenderer {
             }
             case HEALER: {
                 double r = half * 0.8;
-                gc.setFill(Color.web("#f8f8f8"));
+                gc.setFill(MINI_HEALER_BODY);
                 gc.fillOval(cx - r, cy - r, r * 2.0, r * 2.0);
                 gc.strokeOval(cx - r, cy - r, r * 2.0, r * 2.0);
                 double cw = Math.max(1.0, size * 0.15);
@@ -182,7 +211,7 @@ public final class StructureRenderer {
             case ASSASSIN: {
                 double[] xs = {cx, cx + half, cx, cx - half};
                 double[] ys = {cy - half, cy, cy + half, cy};
-                gc.setFill(Color.web("#1a1418"));
+                gc.setFill(MINI_ASSASSIN_FILL);
                 gc.fillPolygon(xs, ys, 4);
                 gc.strokePolygon(xs, ys, 4);
                 break;
@@ -195,7 +224,7 @@ public final class StructureRenderer {
             case PIKEMAN: {
                 gc.fillRoundRect(cx - half, cy - half, size, size, 2.0, 2.0);
                 gc.strokeRoundRect(cx - half, cy - half, size, size, 2.0, 2.0);
-                gc.setStroke(Color.web("#3a2a18"));
+                gc.setStroke(MINI_PIKE_STROKE);
                 gc.setLineWidth(1.5);
                 gc.strokeLine(cx, cy - half, cx, cy - half - size * 0.5);
                 gc.setLineWidth(1.0);
@@ -206,8 +235,8 @@ public final class StructureRenderer {
                 double[] ys = {cy - half, cy + half, cy + half};
                 gc.fillPolygon(xs, ys, 3);
                 gc.strokePolygon(xs, ys, 3);
-                gc.setFill(Color.web("#f5c84a"));
-                gc.setStroke(Color.web("#7a5a10"));
+                gc.setFill(MINI_CROWN_FILL);
+                gc.setStroke(MINI_CROWN_STROKE);
                 double cw = Math.max(1.0, size * 0.15);
                 double ch = size * 0.2;
                 double topY = cy - half - ch;
@@ -260,9 +289,8 @@ public final class StructureRenderer {
 
     private static void drawGateLabel(GraphicsContext gc, Structure s, boolean open) {
         gc.save();
-        gc.setFont(javafx.scene.text.Font.font("System",
-                javafx.scene.text.FontWeight.BOLD, 9.0));
-        gc.setFill(open ? Color.web("#a8e055") : Color.web("#e0a855"));
+        gc.setFont(GATE_LABEL_FONT);
+        gc.setFill(open ? GATE_LABEL_OPEN : GATE_LABEL_CLOSED);
         gc.setTextAlign(javafx.scene.text.TextAlignment.CENTER);
         double cx = s.x() + s.width() / 2.0;
         double labelY = s.y() + s.height() + 10.0;
