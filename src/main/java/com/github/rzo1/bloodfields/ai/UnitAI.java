@@ -73,10 +73,15 @@ public final class UnitAI implements UnitUpdater {
         simTime = simClock.getOrDefault(u.id, 0.0);
 
         double[] prev = lastSeenPos.get(u.id);
-        double movedThisTick = prev == null
-                ? Double.POSITIVE_INFINITY
-                : Math.hypot(u.x - prev[0], u.y - prev[1]);
-        lastSeenPos.put(u.id, new double[]{u.x, u.y});
+        double movedThisTick;
+        if (prev == null) {
+            movedThisTick = Double.POSITIVE_INFINITY;
+            lastSeenPos.put(u.id, new double[]{u.x, u.y});
+        } else {
+            movedThisTick = Math.hypot(u.x - prev[0], u.y - prev[1]);
+            prev[0] = u.x;
+            prev[1] = u.y;
+        }
 
         if (!u.type.flying() && state.world != null && !state.world.passableAt(u.x, u.y)) {
             escapeImpassable(u, state.world);
