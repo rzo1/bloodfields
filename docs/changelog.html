@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bloodfield — Changelog</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -65,8 +68,9 @@
             .replace(/'/g, '&#39;');
   }
 
-  // Tiny markdown subset: headings (## / ###), lists (- / *), paragraphs,
-  // inline `code`, [text](url) links. Input is escaped first.
+  // Tiny markdown subset: headings (## / ###), lists (- / *), GFM tables
+  // (| col | col | with --- separator), paragraphs, inline `code`, **bold**,
+  // *italic*, [text](url) links. Input is escaped first.
   function renderMarkdown(raw) {
     if (!raw) return '<p><em>No notes for this release.</em></p>';
     var text = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -88,6 +92,13 @@
         }).join('') + '</ul>');
         listBuf = null;
       }
+    }
+
+    function splitRow(rowText) {
+      // Drop leading/trailing pipe, then split on |. Preserves intentional
+      // empty cells.
+      var trimmedRow = rowText.replace(/^\|/, '').replace(/\|$/, '');
+      return trimmedRow.split('|').map(function (c) { return c.trim(); });
     }
 
     for (var i = 0; i < lines.length; i++) {
@@ -119,6 +130,36 @@
         out.push('<h5>' + inlineMd(escapeHtml(h3[1])) + '</h5>');
         continue;
       }
+      // GFM table: header row | --- separator | data rows.
+      if (/^\|.+\|$/.test(trimmed)) {
+        var next = (i + 1 < lines.length) ? lines[i + 1].replace(/^\s+/, '') : '';
+        if (/^\|[\s:\-|]+\|$/.test(next) && /-/.test(next)) {
+          flushPara();
+          flushList();
+          var headers = splitRow(trimmed);
+          var bodyRows = [];
+          i++; // skip separator
+          while (i + 1 < lines.length) {
+            var rt = lines[i + 1].replace(/^\s+/, '');
+            if (!/^\|.+\|$/.test(rt)) break;
+            bodyRows.push(splitRow(rt));
+            i++;
+          }
+          var html = '<table><thead><tr>' +
+            headers.map(function (h) {
+              return '<th>' + inlineMd(escapeHtml(h)) + '</th>';
+            }).join('') +
+            '</tr></thead><tbody>' +
+            bodyRows.map(function (row) {
+              return '<tr>' + row.map(function (c) {
+                return '<td>' + inlineMd(escapeHtml(c)) + '</td>';
+              }).join('') + '</tr>';
+            }).join('') +
+            '</tbody></table>';
+          out.push(html);
+          continue;
+        }
+      }
       flushList();
       paraBuf.push(escapeHtml(trimmed));
     }
@@ -127,8 +168,10 @@
     return out.join('\n');
   }
 
-  // Apply inline replacements AFTER HTML escaping. Order matters: links first
-  // (so the URL inside the parens isn't mangled by code spans), then code.
+  // Apply inline replacements AFTER HTML escaping. Order matters:
+  //   1. links — eat the URL parens before code spans / emphasis run.
+  //   2. inline code — protect contents from emphasis.
+  //   3. **bold** before *italic* so '**' isn't mis-tokenised as italic+italic.
   function inlineMd(escaped) {
     var s = escaped.replace(
       /\[([^\]]+)\]\(([^)\s]+)\)/g,
@@ -139,6 +182,8 @@
       }
     );
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
     return s;
   }
 

@@ -44,9 +44,16 @@ header {
 }
 
 .ascii {
-  font-family: 'Menlo', 'Consolas', monospace;
+  /* JetBrains Mono renders the box-drawing / shade-block / dagger glyphs at a
+     consistent advance width; Menlo and Consolas don't, which is what made the
+     header look ragged. Keep the platform fallbacks in case the webfont fails
+     to load. */
+  font-family: 'JetBrains Mono', 'DejaVu Sans Mono', 'Cascadia Mono',
+               'Menlo', 'Consolas', 'Courier New', monospace;
   font-size: 11px;
   line-height: 1.15;
+  letter-spacing: 0;
+  font-feature-settings: "calt" 0, "liga" 0;
   color: var(--text-accent);
   text-shadow: 0 0 12px rgba(200, 51, 46, 0.4);
   white-space: pre;
@@ -357,4 +364,37 @@ footer {
 
 .release-body p {
   margin: 6px 0;
+}
+
+.release-body strong {
+  color: var(--text-primary);
+  font-weight: bold;
+}
+
+.release-body em {
+  font-style: italic;
+}
+
+.release-body table {
+  border-collapse: collapse;
+  margin: 10px 0 14px;
+  font-size: 14px;
+}
+
+.release-body th,
+.release-body td {
+  border: 1px solid var(--divider);
+  padding: 4px 10px;
+  text-align: left;
+}
+
+.release-body th {
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text-warn);
+  font-family: 'Georgia', 'Times New Roman', serif;
+  font-weight: bold;
+}
+
+.release-body td {
+  color: var(--text-primary);
 }
