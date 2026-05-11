@@ -27,6 +27,7 @@ public final class MainMenuRenderer extends VBox {
     private final Label codeError = new Label("");
     private final Label hint = new Label("ENTER / SPACE start campaign  —  ESC quits");
     private final CheckBox colourBlindToggle = new CheckBox("Colour-blind palette");
+    private final CheckBox replayRecordingToggle = new CheckBox("Record replays");
     private final Label versionLabel = new Label(BuildInfo.displayString());
     private final HBox updateBanner = new HBox(10);
     private final Label updateLabel = new Label();
@@ -96,13 +97,21 @@ public final class MainMenuRenderer extends VBox {
             requestLayout();
         });
 
+        replayRecordingToggle.setSelected(PlayerPreferences.get().replayRecording());
+        replayRecordingToggle.setFont(Font.font("Georgia", FontWeight.NORMAL, 12));
+        replayRecordingToggle.setStyle("-fx-text-fill: " + Theme.TEXT_DIM + ";");
+        replayRecordingToggle.selectedProperty().addListener((obs, was, now) -> {
+            PlayerPreferences.get().setReplayRecording(Boolean.TRUE.equals(now));
+            requestLayout();
+        });
+
         versionLabel.setFont(Font.font("Georgia", FontWeight.NORMAL, 10));
         versionLabel.setStyle(Theme.labelDimStyle());
         versionLabel.setMaxWidth(Double.MAX_VALUE);
         versionLabel.setAlignment(Pos.BOTTOM_RIGHT);
         VBox.setMargin(versionLabel, new Insets(20, 0, 0, 0));
 
-        getChildren().addAll(title, updateBanner, campaignButton, skirmishButton, versusButton, codeRow, codeError, hint, colourBlindToggle, versionLabel);
+        getChildren().addAll(title, updateBanner, campaignButton, skirmishButton, versusButton, codeRow, codeError, hint, colourBlindToggle, replayRecordingToggle, versionLabel);
     }
 
     private void configureUpdateBanner() {
@@ -175,6 +184,7 @@ public final class MainMenuRenderer extends VBox {
     public Button skirmishButton() { return skirmishButton; }
     public Button versusButton() { return versusButton; }
     public CheckBox colourBlindToggle() { return colourBlindToggle; }
+    public CheckBox replayRecordingToggle() { return replayRecordingToggle; }
 
     private void tryLoad() {
         String code = codeField.getText();

@@ -698,8 +698,19 @@ public class GameApp extends Application {
 
     /** Wire a fresh ReplayRecorder into state + deploymentController. Called at
      *  each deployment-start site. Idempotent per-battle: a new recorder is
-     *  created each time a new battle is set up. */
+     *  created each time a new battle is set up.
+     *
+     *  Gated on {@link PlayerPreferences#replayRecording()}: when the toggle is
+     *  off no recorder is created, so {@code state.recorder} stays null and the
+     *  end-of-battle save in {@link #saveReplayIfRecording()} is a no-op.
+     *  Toggling the preference mid-deployment does NOT retroactively start or
+     *  stop recording for the current battle — the next battle picks up the
+     *  new value. */
     private void armReplayRecording() {
+        if (!PlayerPreferences.get().replayRecording()) {
+            activeRecorder = null;
+            return;
+        }
         if (state == null || deploymentController == null) return;
         if (state.rngSeed == 0L) {
             state.rngSeed = System.nanoTime();
