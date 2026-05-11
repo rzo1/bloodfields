@@ -32,6 +32,17 @@
     -fx-text-fill: #ffd6c8;
 }
 
+/* Keyboard focus (Tab navigation). The custom -fx-background-color override
+   above suppresses Modena's default focus halo, so we draw our own — lit red
+   border plus an accent glow so the active button is unmistakable. */
+.gore-button:focused,
+.button:focused {
+    -fx-background-color: linear-gradient(to bottom, #3a2820, #2a1815);
+    -fx-border-color: #c8332e;
+    -fx-text-fill: #ffd6c8;
+    -fx-effect: dropshadow(gaussian, #c8332e, 10, 0.6, 0, 0);
+}
+
 .gore-button:pressed,
 .button:pressed {
     -fx-background-color: linear-gradient(to bottom, #1a1310, #0a0807);
@@ -59,6 +70,12 @@
 .toggle-button:hover {
     -fx-background-color: linear-gradient(to bottom, #3a2820, #2a1815);
     -fx-border-color: #c8332e;
+}
+
+.toggle-button:focused {
+    -fx-background-color: linear-gradient(to bottom, #3a2820, #2a1815);
+    -fx-border-color: #c8332e;
+    -fx-effect: dropshadow(gaussian, #c8332e, 10, 0.6, 0, 0);
 }
 
 .toggle-button:selected {
