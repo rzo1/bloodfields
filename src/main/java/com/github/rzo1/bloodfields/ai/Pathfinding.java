@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.PriorityQueue;
 
 public final class Pathfinding {
 
@@ -54,14 +53,13 @@ public final class Pathfinding {
         }
 
         HashMap<Long, Node> nodes = new HashMap<>();
-        PriorityQueue<Node> open = new PriorityQueue<>((a, b) -> Double.compare(a.f, b.f));
+        MinHeap open = new MinHeap();
 
         Node start = new Node(sCol, sRow);
         start.g = 0.0;
         start.f = octile(sCol, sRow, tCol, tRow);
-        start.openIndex = 1;
         nodes.put(packKey(sCol, sRow), start);
-        open.add(start);
+        open.push(start);
 
         int[][] dirs = {
                 {1, 0}, {-1, 0}, {0, 1}, {0, -1},
@@ -70,7 +68,7 @@ public final class Pathfinding {
 
         int expansions = 0;
         while (!open.isEmpty()) {
-            Node cur = open.poll();
+            Node cur = open.pop();
             if (cur.closed) continue;
             cur.closed = true;
             if (++expansions > MAX_EXPANSIONS) {
@@ -105,7 +103,11 @@ public final class Pathfinding {
                     neighbor.parent = cur;
                     neighbor.g = tentativeG;
                     neighbor.f = tentativeG + octile(nc, nr, tCol, tRow);
-                    open.add(neighbor);
+                    if (neighbor.heapIdx >= 0) {
+                        open.decreaseKey(neighbor);
+                    } else {
+                        open.push(neighbor);
+                    }
                 }
             }
         }
@@ -193,12 +195,87 @@ public final class Pathfinding {
         Node parent;
         double g = Double.POSITIVE_INFINITY;
         double f = Double.POSITIVE_INFINITY;
-        int openIndex;
+        int heapIdx = -1;
         boolean closed;
 
         Node(int col, int row) {
             this.col = col;
             this.row = row;
+        }
+    }
+
+    private static final class MinHeap {
+        private Node[] heap = new Node[64];
+        private int size;
+
+        boolean isEmpty() {
+            return size == 0;
+        }
+
+        void push(Node n) {
+            if (size == heap.length) {
+                Node[] grown = new Node[heap.length * 2];
+                System.arraycopy(heap, 0, grown, 0, size);
+                heap = grown;
+            }
+            int i = size++;
+            heap[i] = n;
+            n.heapIdx = i;
+            siftUp(i);
+        }
+
+        Node pop() {
+            Node top = heap[0];
+            top.heapIdx = -1;
+            int last = --size;
+            if (last == 0) {
+                heap[0] = null;
+                return top;
+            }
+            Node moved = heap[last];
+            heap[last] = null;
+            heap[0] = moved;
+            moved.heapIdx = 0;
+            siftDown(0);
+            return top;
+        }
+
+        void decreaseKey(Node n) {
+            siftUp(n.heapIdx);
+        }
+
+        private void siftUp(int i) {
+            Node x = heap[i];
+            while (i > 0) {
+                int parent = (i - 1) >>> 1;
+                Node p = heap[parent];
+                if (x.f >= p.f) break;
+                heap[i] = p;
+                p.heapIdx = i;
+                i = parent;
+            }
+            heap[i] = x;
+            x.heapIdx = i;
+        }
+
+        private void siftDown(int i) {
+            Node x = heap[i];
+            int half = size >>> 1;
+            while (i < half) {
+                int child = (i << 1) + 1;
+                int right = child + 1;
+                Node c = heap[child];
+                if (right < size && heap[right].f < c.f) {
+                    child = right;
+                    c = heap[right];
+                }
+                if (x.f <= c.f) break;
+                heap[i] = c;
+                c.heapIdx = i;
+                i = child;
+            }
+            heap[i] = x;
+            x.heapIdx = i;
         }
     }
 }

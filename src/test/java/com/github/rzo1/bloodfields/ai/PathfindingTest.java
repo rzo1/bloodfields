@@ -150,4 +150,110 @@ class PathfindingTest {
             assertTrue(w.passableAt(wp[0], wp[1]));
         }
     }
+
+    @Test
+    void wallWithSingleGap_pathCostMatchesOctileOptimum() {
+        // A wall with a single gap is a known A* scenario where the optimal path
+        // is start -> gap -> target. The indexed heap must not degrade optimality.
+        double tileSize = 32.0;
+        int cols = 20;
+        int rows = 20;
+        Terrain.TileType[][] tiles = new Terrain.TileType[cols][rows];
+        for (int cx = 0; cx < cols; cx++) {
+            for (int cy = 0; cy < rows; cy++) {
+                tiles[cx][cy] = Terrain.TileType.GRASS;
+            }
+        }
+        int wallCol = 10;
+        int gapRow = 10;
+        for (int r = 0; r < rows; r++) {
+            if (r == gapRow) continue;
+            tiles[wallCol][r] = Terrain.TileType.RIVER;
+        }
+        World w = new World(cols * tileSize, rows * tileSize, tileSize, tiles);
+
+        int sCol = 3;
+        int sRow = 5;
+        int tCol = 17;
+        int tRow = 15;
+        double sx = sCol * tileSize + 0.5 * tileSize;
+        double sy = sRow * tileSize + 0.5 * tileSize;
+        double tx = tCol * tileSize + 0.5 * tileSize;
+        double ty = tRow * tileSize + 0.5 * tileSize;
+
+        List<double[]> path = Pathfinding.findPath(w, sx, sy, tx, ty);
+        assertNotNull(path);
+        assertTrue(!path.isEmpty());
+
+        // Cost = sum of octile step costs between consecutive waypoints (start is implicit).
+        double sqrt2 = Math.sqrt(2.0);
+        double cost = 0.0;
+        int prevCol = sCol;
+        int prevRow = sRow;
+        for (double[] wp : path) {
+            int c = (int) (wp[0] / tileSize);
+            int r = (int) (wp[1] / tileSize);
+            int dc = Math.abs(c - prevCol);
+            int dr = Math.abs(r - prevRow);
+            assertTrue(dc <= 1 && dr <= 1, "steps must be to 8-neighbours");
+            cost += (dc == 1 && dr == 1) ? sqrt2 : (dc + dr);
+            prevCol = c;
+            prevRow = r;
+        }
+        // Known octile-optimal cost via the gap: start->gap then gap->target.
+        double leg1 = octile(sCol, sRow, wallCol, gapRow);
+        double leg2 = octile(wallCol, gapRow, tCol, tRow);
+        double optimal = leg1 + leg2;
+        assertEquals(optimal, cost, 1e-9,
+                "indexed-heap A* must produce an octile-optimal path; expected "
+                        + optimal + " got " + cost);
+    }
+
+    @Test
+    void noPathScenario_bailsUnderMaxExpansions() {
+        // Sealed pocket: source enclosed by impassable tiles with no exit.
+        // Must fail fast (well under MAX_EXPANSIONS), not exhaust the heap.
+        double tileSize = 32.0;
+        int cols = 30;
+        int rows = 30;
+        Terrain.TileType[][] tiles = new Terrain.TileType[cols][rows];
+        for (int cx = 0; cx < cols; cx++) {
+            for (int cy = 0; cy < rows; cy++) {
+                tiles[cx][cy] = Terrain.TileType.GRASS;
+            }
+        }
+        // 5x5 sealed box at (5..9, 5..9): interior is grass, border is river.
+        for (int c = 4; c <= 10; c++) {
+            tiles[c][4] = Terrain.TileType.RIVER;
+            tiles[c][10] = Terrain.TileType.RIVER;
+        }
+        for (int r = 4; r <= 10; r++) {
+            tiles[4][r] = Terrain.TileType.RIVER;
+            tiles[10][r] = Terrain.TileType.RIVER;
+        }
+        World w = new World(cols * tileSize, rows * tileSize, tileSize, tiles);
+
+        double sx = 7 * tileSize + 0.5 * tileSize; // inside the box
+        double sy = 7 * tileSize + 0.5 * tileSize;
+        double tx = 25 * tileSize + 0.5 * tileSize; // outside the box
+        double ty = 25 * tileSize + 0.5 * tileSize;
+
+        long startNs = System.nanoTime();
+        List<double[]> path = Pathfinding.findPath(w, sx, sy, tx, ty);
+        long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
+
+        assertNull(path, "sealed pocket -> no path");
+        // Sealed 5x5 box has only ~25 interior cells; A* should terminate
+        // far below MAX_EXPANSIONS (800) and well under 50ms even on slow CI.
+        assertTrue(elapsedMs < 50,
+                "no-path bail should be fast, took " + elapsedMs + "ms");
+    }
+
+    private static double octile(int ax, int ay, int bx, int by) {
+        int dx = Math.abs(ax - bx);
+        int dy = Math.abs(ay - by);
+        int min = Math.min(dx, dy);
+        int max = Math.max(dx, dy);
+        return (max - min) + Math.sqrt(2.0) * min;
+    }
 }
