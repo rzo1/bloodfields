@@ -77,34 +77,37 @@ public final class FireField {
         if (dt <= 0.0) {
             return;
         }
-        Iterator<Map.Entry<Long, Double>> it = remaining.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<Long, Double> e = it.next();
-            double next = e.getValue() - dt;
-            if (next <= 0.0) {
-                scorched.put(e.getKey(), Boolean.TRUE);
-                it.remove();
-            } else {
-                e.setValue(next);
+        if (!remaining.isEmpty()) {
+            Iterator<Map.Entry<Long, Double>> it = remaining.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<Long, Double> e = it.next();
+                double next = e.getValue() - dt;
+                if (next <= 0.0) {
+                    scorched.put(e.getKey(), Boolean.TRUE);
+                    it.remove();
+                } else {
+                    e.setValue(next);
+                }
             }
         }
         if (tileSize <= 0.0 || remaining.isEmpty()) {
             return;
         }
-        applyDamageOnFire(reds, dt, tileSize);
-        applyDamageOnFire(blues, dt, tileSize);
+        double damage = FIRE_DAMAGE_PER_SEC * dt;
+        double invTile = 1.0 / tileSize;
+        applyDamageOnFire(reds, damage, invTile);
+        applyDamageOnFire(blues, damage, invTile);
     }
 
-    private void applyDamageOnFire(Iterable<Unit> units, double dt, double tileSize) {
+    private void applyDamageOnFire(Iterable<Unit> units, double damage, double invTile) {
         if (units == null) return;
         for (Unit u : units) {
             if (u == null || !u.isAlive()) continue;
             if (u.type.flying()) continue;
-            int col = (int) Math.floor(u.x / tileSize);
-            int row = (int) Math.floor(u.y / tileSize);
-            Double r = remaining.get(key(col, row));
-            if (r != null && r > 0.0) {
-                u.takeDamage(FIRE_DAMAGE_PER_SEC * dt);
+            int col = (int) Math.floor(u.x * invTile);
+            int row = (int) Math.floor(u.y * invTile);
+            if (remaining.containsKey(key(col, row))) {
+                u.takeDamage(damage);
             }
         }
     }

@@ -4,10 +4,12 @@ import com.github.rzo1.bloodfields.engine.GameState;
 import com.github.rzo1.bloodfields.engine.Structure;
 import com.github.rzo1.bloodfields.engine.StructureField;
 import com.github.rzo1.bloodfields.engine.StructureType;
+import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitType;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,15 +31,24 @@ public final class MoraleSystem {
     private static final double POST_RALLY_GRACE_SECONDS = 8.0;
     private static final int ARMY_ROUT_CAP_PERCENT = 30;
 
-    private final Map<Long, Boolean> routed = new HashMap<>();
     private final Map<Long, Double> routedSinceSeconds = new HashMap<>();
     private final Map<Long, Double> fleeTime = new HashMap<>();
     private final Map<Long, Double> rallyGrace = new HashMap<>();
 
+    // Reusable scratch buffer for grid.withinRadius() queries to avoid the
+    // per-call ArrayList that withinRadius(x,y,r) otherwise allocates.
+    private final ArrayList<Unit> scratchNearby = new ArrayList<>(32);
+
+    // Per-tick memo for the army-rout-cap probe so we don't iterate the whole
+    // army once per unit per tick.
+    private long armyRoutCapTick = Long.MIN_VALUE;
+    private boolean armyRoutCapRed;
+    private boolean armyRoutCapBlue;
+
+    private final int[] neighborCounts = new int[2];
+
     public boolean isRouted(Unit u) {
-        if (u == null) return false;
-        Boolean r = routed.get(u.id);
-        return r != null && r;
+        return u != null && u.routed;
     }
 
     public void update(Unit u, GameState state, double dt) {
@@ -48,16 +59,14 @@ public final class MoraleSystem {
             return;
         }
         if (hasNearbyFriendlyDragon(u, state)) {
-            if (routed.getOrDefault(u.id, false)) {
-                routed.put(u.id, false);
+            if (u.routed) {
                 routedSinceSeconds.remove(u.id);
                 u.routed = false;
             }
             return;
         }
         if (hasNearbyFriendlyMannedTower(u, state)) {
-            if (routed.getOrDefault(u.id, false)) {
-                routed.put(u.id, false);
+            if (u.routed) {
                 routedSinceSeconds.remove(u.id);
                 u.routed = false;
             }
@@ -69,10 +78,13 @@ public final class MoraleSystem {
         }
         double hpRatio = u.hp / maxHp;
 
-        if (isRouted(u)) {
-            double t = routedSinceSeconds.getOrDefault(u.id, 0.0) + dt;
+        if (u.routed) {
+            Double prev = routedSinceSeconds.get(u.id);
+            double t = (prev == null ? 0.0 : prev) + dt;
             routedSinceSeconds.put(u.id, t);
-            double fleeT = fleeTime.merge(u.id, dt, Double::sum);
+            Double prevFlee = fleeTime.get(u.id);
+            double fleeT = (prevFlee == null ? 0.0 : prevFlee) + dt;
+            fleeTime.put(u.id, fleeT);
             if (fleeT > MAX_FLEE_SECONDS) {
                 forceRally(u);
                 return;
@@ -82,9 +94,7 @@ public final class MoraleSystem {
                 return;
             }
             if (hpRatio > RALLY_HP_RATIO && t >= RALLY_MIN_SECONDS) {
-                List<Unit> nearbyEnemies = enemiesWithin(u, state, RALLY_RADIUS);
-                if (nearbyEnemies.isEmpty()) {
-                    routed.put(u.id, false);
+                if (!anyEnemyWithin(u, state, RALLY_RADIUS)) {
                     routedSinceSeconds.remove(u.id);
                     fleeTime.remove(u.id);
                     u.routed = false;
@@ -113,9 +123,8 @@ public final class MoraleSystem {
             return;
         }
         if (hpRatio < OUTNUMBERED_RATIO) {
-            int enemyCount = countEnemiesWithin(u, state, OUTNUMBERED_RADIUS);
-            int allyCount = countAlliesWithin(u, state, OUTNUMBERED_RADIUS);
-            if (enemyCount > allyCount) {
+            countEnemiesAndAlliesWithin(u, state, OUTNUMBERED_RADIUS, neighborCounts);
+            if (neighborCounts[0] > neighborCounts[1]) {
                 setRouted(u);
             }
         }
@@ -136,7 +145,15 @@ public final class MoraleSystem {
     }
 
     private boolean armyRoutCapReached(Unit u, GameState state) {
-        com.github.rzo1.bloodfields.model.Army army = state.armyOf(u.faction);
+        if (state.tick != armyRoutCapTick) {
+            armyRoutCapRed = computeArmyRoutCap(state.red);
+            armyRoutCapBlue = computeArmyRoutCap(state.blue);
+            armyRoutCapTick = state.tick;
+        }
+        return u.faction == Faction.RED ? armyRoutCapRed : armyRoutCapBlue;
+    }
+
+    private static boolean computeArmyRoutCap(Army army) {
         if (army == null) return false;
         int totalAlive = 0;
         int routedCount = 0;
@@ -150,7 +167,6 @@ public final class MoraleSystem {
     }
 
     private void forceRally(Unit u) {
-        routed.put(u.id, false);
         routedSinceSeconds.remove(u.id);
         fleeTime.remove(u.id);
         rallyGrace.put(u.id, POST_RALLY_GRACE_SECONDS);
@@ -158,50 +174,73 @@ public final class MoraleSystem {
     }
 
     private void setRouted(Unit u) {
-        routed.put(u.id, true);
         routedSinceSeconds.put(u.id, 0.0);
         u.routed = true;
     }
 
-    private List<Unit> enemiesWithin(Unit u, GameState state, double radius) {
-        List<Unit> nearby = state.grid.withinRadius(u.x, u.y, radius);
-        java.util.ArrayList<Unit> enemies = new java.util.ArrayList<>(nearby.size());
-        for (Unit n : nearby) {
-            if (n == null || n == u) continue;
-            if (!n.isAlive()) continue;
-            if (n.faction != u.faction) enemies.add(n);
-        }
-        return enemies;
-    }
-
-    private int countEnemiesWithin(Unit u, GameState state, double radius) {
-        return enemiesWithin(u, state, radius).size();
-    }
-
-    private int countAlliesWithin(Unit u, GameState state, double radius) {
-        List<Unit> nearby = state.grid.withinRadius(u.x, u.y, radius);
-        int n = 1;
-        for (Unit other : nearby) {
+    /**
+     * Fast existence check: does at least one alive enemy of {@code u} sit
+     * within {@code radius}? Uses the buffer-out grid query so no list is
+     * allocated.
+     */
+    private boolean anyEnemyWithin(Unit u, GameState state, double radius) {
+        state.grid.withinRadius(u.x, u.y, radius, scratchNearby);
+        int n = scratchNearby.size();
+        for (int i = 0; i < n; i++) {
+            Unit other = scratchNearby.get(i);
             if (other == null || other == u) continue;
             if (!other.isAlive()) continue;
-            if (other.faction == u.faction) n++;
+            if (other.faction != u.faction) return true;
         }
-        return n;
+        return false;
+    }
+
+    /**
+     * Single-pass enemy/ally tally that fills {@code out} as [enemies, allies+self].
+     * Avoids the two grid queries + intermediate ArrayList that the old
+     * {@code countEnemiesWithin}/{@code countAlliesWithin} pair allocated.
+     */
+    private void countEnemiesAndAlliesWithin(Unit u, GameState state, double radius, int[] out) {
+        state.grid.withinRadius(u.x, u.y, radius, scratchNearby);
+        int enemies = 0;
+        int allies = 1; // include self
+        int n = scratchNearby.size();
+        Faction f = u.faction;
+        for (int i = 0; i < n; i++) {
+            Unit other = scratchNearby.get(i);
+            if (other == null || other == u) continue;
+            if (!other.isAlive()) continue;
+            if (other.faction == f) {
+                allies++;
+            } else {
+                enemies++;
+            }
+        }
+        out[0] = enemies;
+        out[1] = allies;
     }
 
     public double[] flightDirection(Unit u, GameState state) {
         double dx = 0.0;
         double dy = 0.0;
-        List<Unit> enemies = enemiesWithin(u, state, RALLY_RADIUS);
-        if (!enemies.isEmpty()) {
-            double sx = 0.0;
-            double sy = 0.0;
-            for (Unit e : enemies) {
-                sx += e.x;
-                sy += e.y;
-            }
-            double cx = sx / enemies.size();
-            double cy = sy / enemies.size();
+        state.grid.withinRadius(u.x, u.y, RALLY_RADIUS, scratchNearby);
+        int count = 0;
+        double sx = 0.0;
+        double sy = 0.0;
+        int n = scratchNearby.size();
+        Faction f = u.faction;
+        for (int i = 0; i < n; i++) {
+            Unit e = scratchNearby.get(i);
+            if (e == null || e == u) continue;
+            if (!e.isAlive()) continue;
+            if (e.faction == f) continue;
+            sx += e.x;
+            sy += e.y;
+            count++;
+        }
+        if (count > 0) {
+            double cx = sx / count;
+            double cy = sy / count;
             dx = u.x - cx;
             dy = u.y - cy;
             double mag = Math.sqrt(dx * dx + dy * dy);
@@ -285,19 +324,21 @@ public final class MoraleSystem {
     }
 
     private boolean hasNearbyFriendlyDragon(Unit u, GameState state) {
-        List<Unit> nearby = state.grid.withinRadius(u.x, u.y, DRAGON_AURA_RADIUS);
-        for (Unit n : nearby) {
-            if (n == null || n == u) continue;
-            if (!n.isAlive()) continue;
-            if (n.faction != u.faction) continue;
-            if (n.type == UnitType.DRAGON) return true;
+        state.grid.withinRadius(u.x, u.y, DRAGON_AURA_RADIUS, scratchNearby);
+        int n = scratchNearby.size();
+        Faction f = u.faction;
+        for (int i = 0; i < n; i++) {
+            Unit other = scratchNearby.get(i);
+            if (other == null || other == u) continue;
+            if (!other.isAlive()) continue;
+            if (other.faction != f) continue;
+            if (other.type == UnitType.DRAGON) return true;
         }
         return false;
     }
 
     public void clear(Unit u) {
         if (u == null) return;
-        routed.remove(u.id);
         routedSinceSeconds.remove(u.id);
         fleeTime.remove(u.id);
         rallyGrace.remove(u.id);
