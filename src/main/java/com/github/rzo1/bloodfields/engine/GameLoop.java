@@ -1,5 +1,6 @@
 package com.github.rzo1.bloodfields.engine;
 
+import com.github.rzo1.bloodfields.ai.AiTuning;
 import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.DamageModel;
 import com.github.rzo1.bloodfields.model.HeroAura;
@@ -16,6 +17,7 @@ public final class GameLoop {
 
     private final GameState state;
     private final UnitUpdater updater;
+    private final ArrayList<Unit> projectileNearbyBuf = new ArrayList<>();
 
     public GameLoop(GameState state, UnitUpdater updater) {
         if (state == null) throw new IllegalArgumentException("state");
@@ -38,6 +40,7 @@ public final class GameLoop {
         applyBurning(state.blue, dtSeconds);
 
         rebuildGrid();
+        state.neighborIndex.build(state, AiTuning.separationRadius);
 
         if (state.structures != null) {
             state.structures.autoOpenGatesNearUnits(state.red.units(), state.blue.units());
@@ -191,8 +194,8 @@ public final class GameLoop {
                 continue;
             }
             Unit blocker = null;
-            List<Unit> nearby = state.grid.withinRadius(p.x, p.y, PROJECTILE_HIT_RADIUS);
-            for (Unit candidate : nearby) {
+            state.grid.withinRadius(p.x, p.y, PROJECTILE_HIT_RADIUS, projectileNearbyBuf);
+            for (Unit candidate : projectileNearbyBuf) {
                 if (candidate == null || !candidate.isAlive()) continue;
                 if (candidate.faction == p.owner) continue;
                 blocker = candidate;
@@ -236,8 +239,8 @@ public final class GameLoop {
             }
             return;
         }
-        List<Unit> hits = state.grid.withinRadius(p.x, p.y, p.splashRadius);
-        for (Unit e : hits) {
+        state.grid.withinRadius(p.x, p.y, p.splashRadius, projectileNearbyBuf);
+        for (Unit e : projectileNearbyBuf) {
             if (!e.isAlive()) continue;
             if (e.faction == p.owner) continue;
             double base = p.damage * DamageModel.damageMultiplier(p.attackerType, e.type);

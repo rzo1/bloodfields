@@ -11,6 +11,7 @@ import com.github.rzo1.bloodfields.model.UnitType;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -24,6 +25,8 @@ public final class AuraRenderer {
     private static final double STROKE_ALPHA = 0.35;
     private static final double STROKE_WIDTH = 2.0;
     private static final double GENERAL_TICK_LEN = 4.0;
+
+    private static final ArrayList<Unit> AURA_QUERY_BUF = new ArrayList<>();
 
     private AuraRenderer() {}
 
@@ -49,12 +52,14 @@ public final class AuraRenderer {
                 if (gen == null) continue;
                 if (gen.type != UnitType.GENERAL) continue;
                 if (gen.state == UnitState.DEAD || !gen.isAlive()) continue;
-                List<Unit> nearby = state.grid.withinRadius(gen.x, gen.y, HeroAura.AURA_RADIUS);
-                for (Unit n : nearby) {
+                state.grid.withinRadius(gen.x, gen.y, HeroAura.AURA_RADIUS, AURA_QUERY_BUF);
+                for (int i = 0, sz = AURA_QUERY_BUF.size(); i < sz; i++) {
+                    Unit n = AURA_QUERY_BUF.get(i);
                     if (n == null || !n.isAlive()) continue;
                     if (n.faction != gen.faction) continue;
                     affected.add(n.id);
                 }
+                AURA_QUERY_BUF.clear();
                 affected.add(gen.id);
             }
         }

@@ -97,6 +97,35 @@ class SpatialHashGridTest {
     }
 
     @Test
+    void bufferedWithinRadiusMatchesReturningVariant() {
+        SpatialHashGrid grid = new SpatialHashGrid(2000.0, 2000.0, 64.0);
+        Random r = new Random(11L);
+        for (int i = 0; i < 150; i++) {
+            double x = r.nextDouble() * 2000.0;
+            double y = r.nextDouble() * 2000.0;
+            Faction f = (i % 2 == 0) ? Faction.RED : Faction.BLUE;
+            grid.insert(new Unit(i + 1, UnitType.INFANTRY, f, x, y));
+        }
+        List<Unit> alloc = grid.withinRadius(900.0, 1100.0, 200.0);
+        List<Unit> out = new java.util.ArrayList<>();
+        grid.withinRadius(900.0, 1100.0, 200.0, out);
+        assertEquals(alloc.size(), out.size());
+        assertTrue(out.containsAll(alloc));
+    }
+
+    @Test
+    void bufferedWithinRadiusClearsExistingContents() {
+        SpatialHashGrid grid = new SpatialHashGrid(1000.0, 1000.0, 64.0);
+        Unit far = new Unit(1L, UnitType.INFANTRY, Faction.RED, 900.0, 900.0);
+        grid.insert(far);
+        List<Unit> out = new java.util.ArrayList<>();
+        Unit pre = new Unit(2L, UnitType.INFANTRY, Faction.RED, 0.0, 0.0);
+        out.add(pre);
+        grid.withinRadius(100.0, 100.0, 50.0, out);
+        assertEquals(0, out.size(), "buffer must be cleared before query results");
+    }
+
+    @Test
     void clearEmptiesGrid() {
         SpatialHashGrid grid = new SpatialHashGrid(1000.0, 1000.0, 64.0);
         Unit u = new Unit(1L, UnitType.INFANTRY, Faction.RED, 100.0, 100.0);

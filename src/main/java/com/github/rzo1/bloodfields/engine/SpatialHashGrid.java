@@ -85,8 +85,20 @@ public final class SpatialHashGrid {
 
     public List<Unit> withinRadius(double x, double y, double r) {
         List<Unit> result = new ArrayList<>();
+        withinRadius(x, y, r, result);
+        return result;
+    }
+
+    /**
+     * Buffer-out variant: clears {@code out} and fills it with units inside
+     * the radius. Avoids the per-call ArrayList allocation that the
+     * returning overload performs.
+     */
+    public void withinRadius(double x, double y, double r, List<Unit> out) {
+        if (out == null) return;
+        out.clear();
         if (r < 0.0) {
-            return result;
+            return;
         }
         int minCx = cellX(x - r);
         int maxCx = cellX(x + r);
@@ -102,12 +114,11 @@ public final class SpatialHashGrid {
                     double dx = other.x - x;
                     double dy = other.y - y;
                     if (dx * dx + dy * dy <= r2) {
-                        result.add(other);
+                        out.add(other);
                     }
                 }
             }
         }
-        return result;
     }
 
     public double width() { return width; }

@@ -14,7 +14,6 @@ import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitState;
 import com.github.rzo1.bloodfields.model.UnitType;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -214,9 +213,8 @@ public final class UnitAI implements UnitUpdater {
         double moveSpeed = HeroAura.moveSpeedFor(state, u, u.type.speed() * AiTuning.weatherSpeedMult);
         Steering.seek(u, seekX, seekY, moveSpeed);
 
-        List<Unit> nearby = state.grid.withinRadius(u.x, u.y, AiTuning.separationRadius);
-        List<Unit> allies = filterAllies(nearby, u);
-        Steering.applySeparation(u, allies, AiTuning.separationRadius, AiTuning.separationWeight, moveSpeed);
+        List<Unit> nearby = state.neighborIndex.neighborsOf(u);
+        Steering.applyAllySeparation(u, nearby, AiTuning.separationRadius, AiTuning.separationWeight, moveSpeed);
 
         if (movedThisTick < POKE_MOVEMENT_EPSILON) {
             double accumulated = stuckSeconds.merge(u.id, dt, Double::sum);
@@ -298,15 +296,6 @@ public final class UnitAI implements UnitUpdater {
             if (!w.passableAt(sx, sy)) return true;
         }
         return false;
-    }
-
-    private static List<Unit> filterAllies(List<Unit> units, Unit self) {
-        List<Unit> allies = new ArrayList<>(units.size());
-        for (Unit n : units) {
-            if (n == self) continue;
-            if (n.faction == self.faction) allies.add(n);
-        }
-        return allies;
     }
 
     private void castNecromancy(Unit u, GameState state) {
@@ -419,9 +408,8 @@ public final class UnitAI implements UnitUpdater {
             u.state = UnitState.IDLE;
         }
 
-        List<Unit> nearby = state.grid.withinRadius(u.x, u.y, AiTuning.separationRadius);
-        List<Unit> allies = filterAllies(nearby, u);
-        Steering.applySeparation(u, allies, AiTuning.separationRadius, AiTuning.separationWeight, moveSpeed);
+        List<Unit> nearby = state.neighborIndex.neighborsOf(u);
+        Steering.applyAllySeparation(u, nearby, AiTuning.separationRadius, AiTuning.separationWeight, moveSpeed);
     }
 
     private static Unit findNearestNonHealerAlly(Unit u, GameState state) {

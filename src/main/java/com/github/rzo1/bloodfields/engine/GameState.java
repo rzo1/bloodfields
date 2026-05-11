@@ -17,6 +17,7 @@ public final class GameState {
     public Army blue;
     public final List<Projectile> projectiles;
     public final SpatialHashGrid grid;
+    public final NeighborIndex neighborIndex = new NeighborIndex();
     public long tick;
     public long nextUnitId;
     public Faction winner;

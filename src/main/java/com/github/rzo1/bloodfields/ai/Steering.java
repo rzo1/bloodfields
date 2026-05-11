@@ -33,10 +33,38 @@ public final class Steering {
             return;
         }
         double r2 = radius * radius;
-        for (Unit n : neighbors) {
-            if (n == null || n == u) continue;
-            double dx = u.x - n.x;
-            double dy = u.y - n.y;
+        for (int i = 0, n = neighbors.size(); i < n; i++) {
+            Unit other = neighbors.get(i);
+            if (other == null || other == u) continue;
+            double dx = u.x - other.x;
+            double dy = u.y - other.y;
+            double d2 = dx * dx + dy * dy;
+            if (d2 >= r2 || d2 <= 0.0) continue;
+            double d = Math.sqrt(d2);
+            double push = weight * (radius - d) / radius;
+            u.vx += (dx / d) * push;
+            u.vy += (dy / d) * push;
+        }
+        clampSpeed(u, maxSpeed);
+    }
+
+    /**
+     * Allocation-free variant: takes a (possibly mixed-faction) neighbor list
+     * and filters by ally faction inline.
+     */
+    public static void applyAllySeparation(Unit u, List<Unit> neighbors, double radius, double weight,
+                                           double maxSpeed) {
+        if (neighbors == null || neighbors.isEmpty() || radius <= 0.0) {
+            clampSpeed(u, maxSpeed);
+            return;
+        }
+        double r2 = radius * radius;
+        for (int i = 0, n = neighbors.size(); i < n; i++) {
+            Unit other = neighbors.get(i);
+            if (other == null || other == u) continue;
+            if (other.faction != u.faction) continue;
+            double dx = u.x - other.x;
+            double dy = u.y - other.y;
             double d2 = dx * dx + dy * dy;
             if (d2 >= r2 || d2 <= 0.0) continue;
             double d = Math.sqrt(d2);
