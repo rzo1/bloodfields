@@ -71,6 +71,8 @@ public class GameApp extends Application {
     private FpsOverlay fpsOverlay;
     private MainMenuRenderer menuPane;
     private ResultRenderer resultRenderer;
+    private StatsScreen statsScreen;
+    private com.github.rzo1.bloodfields.engine.ReplayRecorder activeRecorder;
     private AchievementService achievementService;
     private List<Achievement> newlyUnlockedAchievements = Collections.emptyList();
     private int peakCorpsesOnScreen;
@@ -134,6 +136,7 @@ public class GameApp extends Application {
         overlay = new DeploymentOverlayRenderer();
         fpsOverlay = new FpsOverlay();
         resultRenderer = new ResultRenderer();
+        statsScreen = new StatsScreen();
         achievementService = new AchievementService();
         handoverRenderer = new HandoverRenderer();
         sounds = new SoundService();
@@ -433,6 +436,10 @@ public class GameApp extends Application {
                     redCasualties(), initialRedCount,
                     blueCasualties(), initialBlueCount, code,
                     newlyUnlockedAchievements);
+            if (statsScreen != null && state.battleStats != null) {
+                statsScreen.render(g, WIDTH, HEIGHT, state.winner,
+                        state.tick, 1.0 / 60.0, state.battleStats.summary());
+            }
             if (mode == Mode.CAMPAIGN && campaignComplete && state.winner == PLAYER_FACTION) {
                 renderCampaignBanner(g);
             }
@@ -530,6 +537,7 @@ public class GameApp extends Application {
         if (mode == Mode.CAMPAIGN) {
             deploymentController.setVeteranRoster(veteranRoster);
         }
+        armReplayRecording();
 
         hud = new Hud(playerArmy, deploymentController, this::onStartBattle);
         hud.setLevelInfo(level.number(), levels.size(), level.name());
@@ -604,6 +612,9 @@ public class GameApp extends Application {
     }
 
     private void beginBattle() {
+        if (activeRecorder != null) {
+            activeRecorder.recordStart(state);
+        }
         state.phase = GameState.Phase.BATTLE;
         if (mode == Mode.CAMPAIGN) {
             lastDeployment.snapshot(state.armyOf(PLAYER_FACTION));
@@ -678,9 +689,41 @@ public class GameApp extends Application {
                     handleCampaignWinLoss(survivor);
                 }
                 evaluateAchievements(survivor);
+                saveReplayIfRecording();
             }
         } else {
             victoryFrames = 0;
+        }
+    }
+
+    /** Wire a fresh ReplayRecorder into state + deploymentController. Called at
+     *  each deployment-start site. Idempotent per-battle: a new recorder is
+     *  created each time a new battle is set up. */
+    private void armReplayRecording() {
+        if (state == null || deploymentController == null) return;
+        if (state.rngSeed == 0L) {
+            state.rngSeed = System.nanoTime();
+        }
+        activeRecorder = new com.github.rzo1.bloodfields.engine.ReplayRecorder();
+        activeRecorder.captureInitial(state);
+        state.recorder = activeRecorder;
+        deploymentController.setRecorder(activeRecorder, state);
+    }
+
+    /** Persist the current replay to ~/.bloodfields/recordings/<timestamp>.replay.
+     *  Best-effort: failures are logged but never crash the game. */
+    private void saveReplayIfRecording() {
+        if (activeRecorder == null) return;
+        try {
+            java.nio.file.Path dir = java.nio.file.Path.of(
+                    System.getProperty("user.home"), ".bloodfields", "recordings");
+            java.nio.file.Files.createDirectories(dir);
+            String stamp = java.time.LocalDateTime.now()
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+            java.nio.file.Path file = dir.resolve("battle-" + stamp + ".replay");
+            activeRecorder.save(file);
+        } catch (java.io.IOException ex) {
+            System.err.println("Failed to save replay: " + ex.getMessage());
         }
     }
 
@@ -1370,6 +1413,7 @@ public class GameApp extends Application {
         deploymentController = new DeploymentController(canvas, army, deploymentZone, TILE,
                 () -> state.nextUnitId++, state.world);
         deploymentController.setStructures(state.structures);
+        armReplayRecording();
         hud = new Hud(army, deploymentController, this::onStartBattle, allowed);
         hud.setTitleText("DEPLOYMENT");
         hud.setPlayerLabel(label);
@@ -1444,6 +1488,11 @@ public class GameApp extends Application {
         deploymentController = new DeploymentController(canvas, army, deploymentZone, TILE,
                 () -> state.nextUnitId++, state.world);
         deploymentController.setStructures(state.structures);
+        // Reserves deployment is mid-battle; reuse the existing recorder so the
+        // reserve placements end up in the same replay file.
+        if (activeRecorder != null) {
+            deploymentController.setRecorder(activeRecorder, state);
+        }
         hud = new Hud(army, deploymentController, this::onReservesDone, allowed);
         hud.setTitleText("RESERVES");
         hud.setPlayerLabel(label);

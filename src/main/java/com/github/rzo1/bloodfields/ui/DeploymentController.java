@@ -1,5 +1,7 @@
 package com.github.rzo1.bloodfields.ui;
 
+import com.github.rzo1.bloodfields.engine.GameState;
+import com.github.rzo1.bloodfields.engine.ReplayRecorder;
 import com.github.rzo1.bloodfields.engine.Structure;
 import com.github.rzo1.bloodfields.engine.StructureField;
 import com.github.rzo1.bloodfields.engine.World;
@@ -32,6 +34,16 @@ public final class DeploymentController {
     private double ghostY;
 
     private Runnable onArmyChanged;
+
+    // Replay recording: optional. When set, each successful place/remove/gate
+    // toggle is logged so the battle can be reproduced later.
+    private ReplayRecorder recorder;
+    private GameState recorderState;
+
+    public void setRecorder(ReplayRecorder recorder, GameState state) {
+        this.recorder = recorder;
+        this.recorderState = state;
+    }
 
     public DeploymentController(Canvas canvas, Army playerArmy, DeploymentZone zone,
                                 double tileSize, Supplier<Long> idSupplier) {
@@ -217,6 +229,10 @@ public final class DeploymentController {
                     }
                     playerArmy.add(hypothetical);
                     structures.garrison(host, hypothetical);
+                    if (recorder != null) {
+                        recorder.recordPlace(recorderState, playerArmy.faction(),
+                                selectedType, x, y);
+                    }
                     fireChanged();
                     return true;
                 }
@@ -241,6 +257,9 @@ public final class DeploymentController {
         Unit u = new Unit(idSupplier.get(), selectedType, playerArmy.faction(), sx, sy,
                 playerArmy.hpMultiplier(), rank);
         playerArmy.add(u);
+        if (recorder != null) {
+            recorder.recordPlace(recorderState, playerArmy.faction(), selectedType, sx, sy);
+        }
         fireChanged();
         return true;
     }
@@ -263,7 +282,12 @@ public final class DeploymentController {
         if (best == null) {
             return false;
         }
+        double rx = best.x;
+        double ry = best.y;
         playerArmy.remove(best);
+        if (recorder != null) {
+            recorder.recordRemove(recorderState, playerArmy.faction(), rx, ry);
+        }
         fireChanged();
         return true;
     }
@@ -303,6 +327,9 @@ public final class DeploymentController {
         // the gate's footprint lies inside this player's deployment zone.
         if (!structureIntersectsZone(hit)) return false;
         structures.toggleGate(hit);
+        if (recorder != null) {
+            recorder.recordToggleGate(recorderState, hit.id());
+        }
         fireChanged();
         return true;
     }
