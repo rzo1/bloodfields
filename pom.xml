@@ -6,7 +6,7 @@
 
     <groupId>com.github.rzo1</groupId>
     <artifactId>bloodfields</artifactId>
-    <version>1.2.0-SNAPSHOT</version>
+    <version>1.1.2</version>
     <packaging>jar</packaging>
     <name>bloodfields</name>
 
@@ -16,7 +16,7 @@
         <junit.version>5.11.0</junit.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <gitcommitid.skip>false</gitcommitid.skip>
-        <jpackage.appVersion>1.1.1</jpackage.appVersion>
+        <jpackage.appVersion>1.1.2</jpackage.appVersion>
         <jpackage.appName>Bloodfield</jpackage.appName>
         <jpackage.mainJar>bloodfields-${project.version}-all.jar</jpackage.mainJar>
         <jpackage.mainClass>com.github.rzo1.bloodfields.ui.Launcher</jpackage.mainClass>
