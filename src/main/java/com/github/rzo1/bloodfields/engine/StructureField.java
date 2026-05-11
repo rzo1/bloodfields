@@ -23,6 +23,37 @@ public final class StructureField {
     private final Map<Long, List<Unit>> garrisonByStructure = new HashMap<>();
     private final Map<Long, Structure> structureByGarrisonedUnit = new HashMap<>();
 
+    // Tile-index acceleration. When bound to a World, each cell holds the
+    // structures whose AABB overlaps it AND which currently block movement
+    // (alive, non-open). Lookups walk the indexed cells instead of every
+    // structure. Unbound (e.g. unit tests that don't go through GameState)
+    // falls back to the linear scan below.
+    private int gridCols;
+    private int gridRows;
+    private double gridTileSize;
+    private boolean gridBound;
+    private Object[] gridCells; // null | Structure | Structure[]
+
+    public void bind(World world) {
+        if (world == null) {
+            gridBound = false;
+            gridCells = null;
+            return;
+        }
+        gridCols = world.cols();
+        gridRows = world.rows();
+        gridTileSize = world.tileSize;
+        gridBound = gridCols > 0 && gridRows > 0 && gridTileSize > 0.0;
+        if (!gridBound) {
+            gridCells = null;
+            return;
+        }
+        gridCells = new Object[gridCols * gridRows];
+        for (Structure s : structures) {
+            if (isBlocking(s)) markCells(s);
+        }
+    }
+
     public void add(Structure s) {
         if (s == null) return;
         structures.add(s);
@@ -30,12 +61,14 @@ public final class StructureField {
         destroyedById.put(s.id(), false);
         openById.put(s.id(), false);
         garrisonByStructure.put(s.id(), new ArrayList<>());
+        if (gridBound && isBlocking(s)) markCells(s);
     }
 
     public boolean remove(Structure s) {
         if (s == null) return false;
         boolean removed = structures.remove(s);
         if (removed) {
+            if (gridBound) unmarkCells(s);
             hpById.remove(s.id());
             destroyedById.remove(s.id());
             openById.remove(s.id());
@@ -69,6 +102,9 @@ public final class StructureField {
         openById.clear();
         garrisonByStructure.clear();
         structureByGarrisonedUnit.clear();
+        if (gridBound && gridCells != null) {
+            for (int i = 0; i < gridCells.length; i++) gridCells[i] = null;
+        }
     }
 
     public boolean isOpen(Structure s) {
@@ -82,7 +118,11 @@ public final class StructureField {
         if (s == null) return;
         if (s.type() != StructureType.GATE) return;
         if (!openById.containsKey(s.id())) return;
+        boolean was = Boolean.TRUE.equals(openById.get(s.id()));
         openById.put(s.id(), open);
+        if (gridBound && was != open) {
+            if (open) unmarkCells(s); else if (!isDestroyed(s)) markCells(s);
+        }
     }
 
     public void toggleGate(Structure s) {
@@ -90,7 +130,11 @@ public final class StructureField {
         if (s.type() != StructureType.GATE) return;
         Boolean v = openById.get(s.id());
         if (v == null) return;
-        openById.put(s.id(), !v);
+        boolean next = !v;
+        openById.put(s.id(), next);
+        if (gridBound) {
+            if (next) unmarkCells(s); else if (!isDestroyed(s)) markCells(s);
+        }
     }
 
     /**
@@ -116,6 +160,7 @@ public final class StructureField {
             double cy = s.y() + s.height() / 2.0;
             if (anyUnitWithin(reds, cx, cy, r2) || anyUnitWithin(blues, cx, cy, r2)) {
                 openById.put(s.id(), true);
+                if (gridBound) unmarkCells(s);
             }
         }
     }
@@ -243,6 +288,22 @@ public final class StructureField {
     }
 
     public boolean blocksMovement(double x, double y) {
+        if (gridBound) {
+            int col = (int) Math.floor(x / gridTileSize);
+            int row = (int) Math.floor(y / gridTileSize);
+            if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return false;
+            Object cell = gridCells[col * gridRows + row];
+            if (cell == null) return false;
+            if (cell instanceof Structure) {
+                Structure s = (Structure) cell;
+                return s.contains(x, y);
+            }
+            Structure[] arr = (Structure[]) cell;
+            for (Structure s : arr) {
+                if (s != null && s.contains(x, y)) return true;
+            }
+            return false;
+        }
         for (Structure s : structures) {
             if (isDestroyed(s)) continue;
             if (!s.type().blocksWhenAlive()) continue;
@@ -271,6 +332,9 @@ public final class StructureField {
     }
 
     public boolean blocksLine(double x0, double y0, double x1, double y1) {
+        if (gridBound) {
+            return walkLine(x0, y0, x1, y1, true) != null;
+        }
         for (Structure s : structures) {
             if (isDestroyed(s)) continue;
             if (!s.type().blocksWhenAlive()) continue;
@@ -285,12 +349,17 @@ public final class StructureField {
 
     /**
      * Among all live, non-open structures that block movement and whose AABB
-     * intersects the line from (x0,y0) to (x1,y1), return the one whose centre
-     * is closest to (x0,y0). Used by melee siege AI to pick the wall they need
-     * to break down. Returns null if no structure blocks the line.
+     * intersects the line from (x0,y0) to (x1,y1), return the one that the
+     * segment hits first when walked from (x0,y0). Used by melee siege AI to
+     * pick the wall they need to break down. Returns null if no structure
+     * blocks the line.
      */
     public Structure firstBlockingStructureOnLine(double x0, double y0,
                                                   double x1, double y1) {
+        if (gridBound) {
+            Structure hit = walkLine(x0, y0, x1, y1, false);
+            return hit;
+        }
         Structure best = null;
         double bestDistSq = Double.POSITIVE_INFINITY;
         for (Structure s : structures) {
@@ -321,6 +390,7 @@ public final class StructureField {
         if (next <= 0.0) {
             hpById.put(s.id(), 0.0);
             destroyedById.put(s.id(), true);
+            if (gridBound) unmarkCells(s);
             evictGarrison(s);
             if (s.type() != StructureType.GATE) {
                 structures.remove(s);
@@ -331,6 +401,217 @@ public final class StructureField {
         } else {
             hpById.put(s.id(), next);
         }
+    }
+
+    private boolean isBlocking(Structure s) {
+        if (s == null) return false;
+        if (!s.type().blocksWhenAlive()) return false;
+        if (isDestroyed(s)) return false;
+        if (isOpen(s)) return false;
+        return true;
+    }
+
+    private void markCells(Structure s) {
+        int c0 = clampCol((int) Math.floor(s.x() / gridTileSize));
+        int c1 = clampCol((int) Math.floor((s.x() + s.width() - 1e-9) / gridTileSize));
+        int r0 = clampRow((int) Math.floor(s.y() / gridTileSize));
+        int r1 = clampRow((int) Math.floor((s.y() + s.height() - 1e-9) / gridTileSize));
+        if (c1 < c0 || r1 < r0) return;
+        for (int c = c0; c <= c1; c++) {
+            int base = c * gridRows;
+            for (int r = r0; r <= r1; r++) {
+                addToCell(base + r, s);
+            }
+        }
+    }
+
+    private void unmarkCells(Structure s) {
+        int c0 = clampCol((int) Math.floor(s.x() / gridTileSize));
+        int c1 = clampCol((int) Math.floor((s.x() + s.width() - 1e-9) / gridTileSize));
+        int r0 = clampRow((int) Math.floor(s.y() / gridTileSize));
+        int r1 = clampRow((int) Math.floor((s.y() + s.height() - 1e-9) / gridTileSize));
+        if (c1 < c0 || r1 < r0) return;
+        for (int c = c0; c <= c1; c++) {
+            int base = c * gridRows;
+            for (int r = r0; r <= r1; r++) {
+                removeFromCell(base + r, s);
+            }
+        }
+    }
+
+    private void addToCell(int idx, Structure s) {
+        Object cur = gridCells[idx];
+        if (cur == null) {
+            gridCells[idx] = s;
+            return;
+        }
+        if (cur instanceof Structure) {
+            if (cur == s) return;
+            gridCells[idx] = new Structure[] { (Structure) cur, s };
+            return;
+        }
+        Structure[] arr = (Structure[]) cur;
+        for (Structure existing : arr) {
+            if (existing == s) return;
+        }
+        Structure[] grown = new Structure[arr.length + 1];
+        System.arraycopy(arr, 0, grown, 0, arr.length);
+        grown[arr.length] = s;
+        gridCells[idx] = grown;
+    }
+
+    private void removeFromCell(int idx, Structure s) {
+        Object cur = gridCells[idx];
+        if (cur == null) return;
+        if (cur instanceof Structure) {
+            if (cur == s) gridCells[idx] = null;
+            return;
+        }
+        Structure[] arr = (Structure[]) cur;
+        int found = -1;
+        for (int i = 0; i < arr.length; i++) {
+            if (arr[i] == s) { found = i; break; }
+        }
+        if (found < 0) return;
+        if (arr.length == 2) {
+            gridCells[idx] = arr[found == 0 ? 1 : 0];
+            return;
+        }
+        Structure[] shrunk = new Structure[arr.length - 1];
+        System.arraycopy(arr, 0, shrunk, 0, found);
+        System.arraycopy(arr, found + 1, shrunk, found, arr.length - found - 1);
+        gridCells[idx] = shrunk;
+    }
+
+    private int clampCol(int c) {
+        if (c < 0) return 0;
+        if (c >= gridCols) return gridCols - 1;
+        return c;
+    }
+
+    private int clampRow(int r) {
+        if (r < 0) return 0;
+        if (r >= gridRows) return gridRows - 1;
+        return r;
+    }
+
+    /**
+     * Supercover DDA walk through tiles between (x0,y0) and (x1,y1). For each
+     * visited cell, check the indexed structures for actual segment-vs-AABB
+     * intersection and return the first one that hits. If {@code anyOnly} is
+     * true, returns the first hit (callers should null-check); otherwise also
+     * returns the first hit (caller treats it as "closest along the line").
+     */
+    private Structure walkLine(double x0, double y0, double x1, double y1, boolean anyOnly) {
+        // Clamp starting cell into bounds; if the source is far outside the
+        // grid we still want to walk forward into it. We work in tile units.
+        double dx = x1 - x0;
+        double dy = y1 - y0;
+        int col = (int) Math.floor(x0 / gridTileSize);
+        int row = (int) Math.floor(y0 / gridTileSize);
+        int endCol = (int) Math.floor(x1 / gridTileSize);
+        int endRow = (int) Math.floor(y1 / gridTileSize);
+        // If the entire segment is on one side of the grid, give up.
+        if ((col < 0 && endCol < 0) || (col >= gridCols && endCol >= gridCols)
+                || (row < 0 && endRow < 0) || (row >= gridRows && endRow >= gridRows)) {
+            return null;
+        }
+        int sx = dx > 0.0 ? 1 : (dx < 0.0 ? -1 : 0);
+        int sy = dy > 0.0 ? 1 : (dy < 0.0 ? -1 : 0);
+        double ax = Math.abs(dx);
+        double ay = Math.abs(dy);
+        double tDeltaX = (ax < 1e-12) ? Double.POSITIVE_INFINITY : gridTileSize / ax;
+        double tDeltaY = (ay < 1e-12) ? Double.POSITIVE_INFINITY : gridTileSize / ay;
+        double tMaxX;
+        if (sx > 0) tMaxX = ((col + 1) * gridTileSize - x0) / ax;
+        else if (sx < 0) tMaxX = (x0 - col * gridTileSize) / ax;
+        else tMaxX = Double.POSITIVE_INFINITY;
+        double tMaxY;
+        if (sy > 0) tMaxY = ((row + 1) * gridTileSize - y0) / ay;
+        else if (sy < 0) tMaxY = (y0 - row * gridTileSize) / ay;
+        else tMaxY = Double.POSITIVE_INFINITY;
+
+        // Safety cap. A path can visit at most (cols + rows) tiles in DDA;
+        // double it for generous slack.
+        int maxSteps = (gridCols + gridRows) * 2 + 4;
+
+        for (int step = 0; step < maxSteps; step++) {
+            if (col >= 0 && col < gridCols && row >= 0 && row < gridRows) {
+                Object cell = gridCells[col * gridRows + row];
+                if (cell != null) {
+                    if (cell instanceof Structure) {
+                        Structure s = (Structure) cell;
+                        if (segmentIntersectsRect(x0, y0, x1, y1,
+                                s.x(), s.y(), s.x() + s.width(), s.y() + s.height())) {
+                            return s;
+                        }
+                    } else {
+                        Structure[] arr = (Structure[]) cell;
+                        Structure best = null;
+                        double bestT = Double.POSITIVE_INFINITY;
+                        for (Structure s : arr) {
+                            if (s == null) continue;
+                            if (!segmentIntersectsRect(x0, y0, x1, y1,
+                                    s.x(), s.y(), s.x() + s.width(), s.y() + s.height())) continue;
+                            if (anyOnly) return s;
+                            double t = entryParameter(x0, y0, x1, y1, s);
+                            if (t < bestT) { bestT = t; best = s; }
+                        }
+                        if (best != null) return best;
+                    }
+                }
+            }
+            if (col == endCol && row == endRow) break;
+            if (tMaxX < tMaxY) {
+                tMaxX += tDeltaX;
+                col += sx;
+            } else {
+                tMaxY += tDeltaY;
+                row += sy;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Slab-test entry parameter t in [0,1] of segment (x0,y0)→(x1,y1) into the
+     * structure's AABB. If the segment starts inside the AABB, returns 0.0.
+     * Returns +inf if it never enters (caller should not rely on this; only
+     * called after segmentIntersectsRect confirmed overlap).
+     */
+    private static double entryParameter(double x0, double y0, double x1, double y1,
+                                         Structure s) {
+        double rx0 = s.x();
+        double ry0 = s.y();
+        double rx1 = rx0 + s.width();
+        double ry1 = ry0 + s.height();
+        if (x0 >= rx0 && x0 <= rx1 && y0 >= ry0 && y0 <= ry1) return 0.0;
+        double dx = x1 - x0;
+        double dy = y1 - y0;
+        double tmin = 0.0;
+        double tmax = 1.0;
+        if (Math.abs(dx) < 1e-12) {
+            if (x0 < rx0 || x0 > rx1) return Double.POSITIVE_INFINITY;
+        } else {
+            double tx1 = (rx0 - x0) / dx;
+            double tx2 = (rx1 - x0) / dx;
+            double tlo = Math.min(tx1, tx2);
+            double thi = Math.max(tx1, tx2);
+            if (tlo > tmin) tmin = tlo;
+            if (thi < tmax) tmax = thi;
+        }
+        if (Math.abs(dy) < 1e-12) {
+            if (y0 < ry0 || y0 > ry1) return Double.POSITIVE_INFINITY;
+        } else {
+            double ty1 = (ry0 - y0) / dy;
+            double ty2 = (ry1 - y0) / dy;
+            double tlo = Math.min(ty1, ty2);
+            double thi = Math.max(ty1, ty2);
+            if (tlo > tmin) tmin = tlo;
+            if (thi < tmax) tmax = thi;
+        }
+        if (tmin > tmax) return Double.POSITIVE_INFINITY;
+        return tmin;
     }
 
     private static boolean segmentIntersectsRect(double x0, double y0, double x1, double y1,

@@ -40,7 +40,8 @@ public final class UnitAI implements UnitUpdater {
     private final Map<Long, Double> stuckSeconds = new HashMap<>();
     private final Map<Long, Structure> siegeTarget = new HashMap<>();
     private final MoraleSystem morale = new MoraleSystem();
-    private Random pokeRng = new Random(0xC0FFEEL);
+    private Random pokeRng;
+    private boolean pokeRngSeeded;
     private double simTime;
 
     public MoraleSystem morale() {
@@ -50,7 +51,16 @@ public final class UnitAI implements UnitUpdater {
     void setPokeRng(Random rng) {
         if (rng != null) {
             this.pokeRng = rng;
+            this.pokeRngSeeded = true;
         }
+    }
+
+    private Random pokeRng(GameState state) {
+        if (!pokeRngSeeded) {
+            this.pokeRng = state != null ? state.rng("ai.poke") : new Random(0xC0FFEEL);
+            this.pokeRngSeeded = true;
+        }
+        return pokeRng;
     }
 
     List<double[]> pathFor(Unit u) {
@@ -149,6 +159,9 @@ public final class UnitAI implements UnitUpdater {
                     if (!blockedByGarrison) {
                         u.target.takeDamage(dealt);
                         HeroAura.applyVampiricHeal(state, u, dealt);
+                        if (state.battleStats != null) {
+                            state.battleStats.recordDamage(u, u.target, dealt);
+                        }
                     }
                     u.attackCooldownRemaining = HeroAura.cooldownAfterStrike(state, u, u.type.attackCooldownSeconds());
                 }
@@ -256,7 +269,7 @@ public final class UnitAI implements UnitUpdater {
         if (movedThisTick < POKE_MOVEMENT_EPSILON) {
             double accumulated = stuckSeconds.merge(u.id, dt, Double::sum);
             if (accumulated >= POKE_THRESHOLD_SECONDS) {
-                double angle = pokeRng.nextDouble() * Math.PI * 2.0;
+                double angle = pokeRng(state).nextDouble() * Math.PI * 2.0;
                 double speed = u.type.speed();
                 u.vx = Math.cos(angle) * speed;
                 u.vy = Math.sin(angle) * speed;
@@ -388,7 +401,7 @@ public final class UnitAI implements UnitUpdater {
             u.attackCooldownRemaining = u.type.attackCooldownSeconds() * 0.5;
             return;
         }
-        boolean revive = pokeRng.nextBoolean();
+        boolean revive = pokeRng(state).nextBoolean();
         if (revive) {
             Unit risen = new Unit(state.nextUnitId++, target.type(), u.faction, target.x(), target.y());
             risen.hp = target.type().maxHp() * 0.5;

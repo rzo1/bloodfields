@@ -1,5 +1,6 @@
 package com.github.rzo1.bloodfields.cli;
 
+import com.github.rzo1.bloodfields.engine.ReplayPlayer;
 import com.github.rzo1.bloodfields.engine.Structure;
 import com.github.rzo1.bloodfields.engine.World;
 import com.github.rzo1.bloodfields.model.Army;
@@ -52,6 +53,7 @@ public final class CliMain {
                 case "map" -> mapDetails(args, out, err);
                 case "play" -> play(args, in, out, err);
                 case "sim" -> sim(args, out, err);
+                case "replay" -> replay(args, out, err);
                 default -> {
                     err.println("Unknown command: " + cmd);
                     printHelp(err);
@@ -79,6 +81,8 @@ public final class CliMain {
         out.println("  sim <levelOrMap>      Run a fully scripted battle.");
         out.println("    --red=<file>        JSON army for player (RED).");
         out.println("    --blue=<file>       JSON army for enemy (BLUE). Optional for campaign.");
+        out.println("    --max-ticks=N       Max ticks (default " + DEFAULT_MAX_TICKS + ").");
+        out.println("  replay <file>         Replay a recorded battle headlessly.");
         out.println("    --max-ticks=N       Max ticks (default " + DEFAULT_MAX_TICKS + ").");
         out.println("  help                  This message.");
         out.println();
@@ -422,6 +426,58 @@ public final class CliMain {
                 .num("simTime", game.simTime())
                 .num("redAlive", game.aliveCount(Faction.RED))
                 .num("blueAlive", game.aliveCount(Faction.BLUE))
+                .kv("winner", winner == null ? "null" : Json.escape(winner.name()));
+        out.println(root.build());
+        return 0;
+    }
+
+    // ----- replay -----
+
+    private static int replay(String[] args, PrintStream out, PrintStream err) {
+        if (args.length < 2) {
+            err.println("Usage: replay <file> [--max-ticks=N]");
+            return 2;
+        }
+        String file = args[1];
+        int maxTicks = DEFAULT_MAX_TICKS;
+        for (int i = 2; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--max-ticks=")) {
+                try { maxTicks = Integer.parseInt(a.substring(12)); }
+                catch (NumberFormatException ex) {
+                    err.println("Bad --max-ticks: " + a);
+                    return 2;
+                }
+            } else {
+                err.println("Unknown flag: " + a);
+                return 2;
+            }
+        }
+        ReplayPlayer player;
+        try {
+            player = ReplayPlayer.load(Path.of(file));
+        } catch (java.io.IOException ex) {
+            err.println("Could not read replay: " + ex.getMessage());
+            return 1;
+        } catch (RuntimeException ex) {
+            err.println("Bad replay: " + ex.getMessage());
+            return 1;
+        }
+        player.run(maxTicks);
+        com.github.rzo1.bloodfields.engine.GameState st = player.state();
+        Faction winner = st.checkVictory();
+        int redAlive = 0;
+        int blueAlive = 0;
+        for (Unit u : st.red.units()) if (u.isAlive()) redAlive++;
+        for (Unit u : st.blue.units()) if (u.isAlive()) blueAlive++;
+        Json.Obj root = Json.obj()
+                .str("op", "replay")
+                .bool("ok", true)
+                .str("file", file)
+                .num("ticks", st.tick)
+                .num("commands", player.commands().size())
+                .num("redAlive", redAlive)
+                .num("blueAlive", blueAlive)
                 .kv("winner", winner == null ? "null" : Json.escape(winner.name()));
         out.println(root.build());
         return 0;

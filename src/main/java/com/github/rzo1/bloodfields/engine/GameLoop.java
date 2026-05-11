@@ -33,6 +33,9 @@ public final class GameLoop {
 
     public void step(double dtSeconds) {
         state.tick++;
+        if (state.recorder != null) {
+            state.recorder.onTickStart(state.tick);
+        }
 
         decrementCooldowns(state.red, dtSeconds);
         decrementCooldowns(state.blue, dtSeconds);
@@ -64,6 +67,14 @@ public final class GameLoop {
 
         pruneDead(state.red);
         pruneDead(state.blue);
+
+        if (state.battleStats != null) {
+            state.battleStats.recordTickEnd(state.tick, state.red, state.blue);
+        }
+
+        if (state.recorder != null) {
+            state.recorder.onTickEnd(state.tick);
+        }
     }
 
     private void applyBurning(Army army, double dt) {
@@ -295,6 +306,13 @@ public final class GameLoop {
             if (u.state == UnitState.DEAD) {
                 if (toRemove == null) toRemove = new ArrayList<>();
                 toRemove.add(u);
+                // Killer attribution is unknown at the prune site; pass null.
+                // The deaths counter still increments; the kills counter stays
+                // 0 unless we wire per-damage-site recordKill calls. UnitAI's
+                // melee branch is the only site doing that today.
+                if (state.battleStats != null) {
+                    state.battleStats.recordKill(null, u);
+                }
             }
         }
         if (toRemove != null) {
