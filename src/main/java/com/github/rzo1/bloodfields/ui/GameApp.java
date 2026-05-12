@@ -228,7 +228,11 @@ public class GameApp extends Application {
                     } else if (versus.phase() == VersusFlow.VersusPhase.HANDOVER_TO_BATTLE_RESUME) {
                         progressVersus();
                     } else if (state.phase == GameState.Phase.RESULT) {
-                        bootMainMenu();
+                        if (mode == Mode.SKIRMISH) {
+                            retrySkirmish();
+                        } else {
+                            bootMainMenu();
+                        }
                     }
                 }
             } else if (state.phase == GameState.Phase.MAIN_MENU) {
@@ -432,10 +436,13 @@ public class GameApp extends Application {
             String code = (mode == Mode.CAMPAIGN && state.winner == PLAYER_FACTION && !campaignComplete)
                     ? earnedNextCode
                     : null;
+            String hint = mode == Mode.SKIRMISH
+                    ? "click or SPACE to retry skirmish"
+                    : "click or SPACE to play again";
             resultRenderer.render(g, WIDTH, HEIGHT, state.winner,
                     redCasualties(), initialRedCount,
                     blueCasualties(), initialBlueCount, code,
-                    newlyUnlockedAchievements);
+                    newlyUnlockedAchievements, hint);
             if (statsScreen != null && state.battleStats != null) {
                 statsScreen.render(g, WIDTH, HEIGHT, state.winner,
                         state.tick, 1.0 / 60.0, state.battleStats.summary());
@@ -476,7 +483,11 @@ public class GameApp extends Application {
                 return;
             }
             if (state.phase == GameState.Phase.RESULT && e.getButton() == MouseButton.PRIMARY) {
-                bootMainMenu();
+                if (mode == Mode.SKIRMISH) {
+                    retrySkirmish();
+                } else {
+                    bootMainMenu();
+                }
                 return;
             }
         }
@@ -914,6 +925,42 @@ public class GameApp extends Application {
         int initialBudget = versus.initialBudgetFor(totalBudget);
         new com.github.rzo1.bloodfields.ai.SkirmishBot()
                 .deployArmy(botArmy, state, WIDTH, HEIGHT, initialBudget, versus.dragonsAllowed());
+    }
+
+    private void retrySkirmish() {
+        if (mode != Mode.SKIRMISH || versus == null) return;
+        VersusFlow prior = versus;
+        VersusFlow fresh = new VersusFlow();
+        fresh.setSkirmish(true);
+        fresh.setSelectedMap(prior.selectedMap());
+        fresh.setSelectedWeather(prior.selectedWeather());
+        fresh.setBudget(prior.budget());
+        fresh.setReservePercent(prior.reservePercent());
+        fresh.setP1HandicapPercent(prior.p1HandicapPercent());
+        fresh.setP2HandicapPercent(prior.p2HandicapPercent());
+        fresh.setPerTypeCap(prior.perTypeCap());
+        fresh.setP1OptIn(prior.p1OptIn());
+        fresh.setP2OptIn(prior.p2OptIn());
+        fresh.optInComplete();
+        versus = fresh;
+
+        if (particles != null) {
+            particles.particles().clear();
+            particles.pools().clear();
+        }
+        if (deathTracker != null) deathTracker.clear();
+        if (hitTracker != null) hitTracker.clear();
+        if (state != null && state.corpses != null) state.corpses.clear();
+        if (bloodyTiles != null) bloodyTiles.clear();
+        if (crows != null) crows.clear();
+        clearGoreOverlays();
+        simTime = 0.0;
+        driver.reset();
+        victorySoundPlayed = false;
+        newlyUnlockedAchievements = Collections.emptyList();
+
+        initializeSkirmishState();
+        beginVersusDeployP1();
     }
 
     private void initializeVersusState() {

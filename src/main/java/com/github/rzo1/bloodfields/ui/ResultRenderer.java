@@ -24,23 +24,32 @@ public final class ResultRenderer {
     private static final Color GOLD = Color.web("#e8c870");
     private static final double ACHIEVEMENT_LINE_HEIGHT = 22.0;
     private static final double ACHIEVEMENT_HEADER_GAP = 30.0;
+    private static final String DEFAULT_HINT = "click or SPACE to play again";
 
     public void render(GraphicsContext g, double w, double h, Faction winner,
                        int redKilled, int redTotal, int blueKilled, int blueTotal) {
         render(g, w, h, winner, redKilled, redTotal, blueKilled, blueTotal, null,
-                Collections.emptyList());
+                Collections.emptyList(), DEFAULT_HINT);
     }
 
     public void render(GraphicsContext g, double w, double h, Faction winner,
                        int redKilled, int redTotal, int blueKilled, int blueTotal,
                        String nextLevelCode) {
         render(g, w, h, winner, redKilled, redTotal, blueKilled, blueTotal, nextLevelCode,
-                Collections.emptyList());
+                Collections.emptyList(), DEFAULT_HINT);
     }
 
     public void render(GraphicsContext g, double w, double h, Faction winner,
                        int redKilled, int redTotal, int blueKilled, int blueTotal,
                        String nextLevelCode, List<Achievement> newlyUnlocked) {
+        render(g, w, h, winner, redKilled, redTotal, blueKilled, blueTotal, nextLevelCode,
+                newlyUnlocked, DEFAULT_HINT);
+    }
+
+    public void render(GraphicsContext g, double w, double h, Faction winner,
+                       int redKilled, int redTotal, int blueKilled, int blueTotal,
+                       String nextLevelCode, List<Achievement> newlyUnlocked,
+                       String hintText) {
         String headline;
         Color headlineColor;
         if (winner == Faction.RED) {
@@ -117,7 +126,8 @@ public final class ResultRenderer {
         double hintY = showAchievements
                 ? cursorY + 28
                 : cy + (showCode ? 90 : 70);
-        g.fillText("click or SPACE to play again", cx, hintY);
+        String hint = (hintText == null || hintText.isEmpty()) ? DEFAULT_HINT : hintText;
+        g.fillText(hint, cx, hintY);
 
         g.restore();
     }
