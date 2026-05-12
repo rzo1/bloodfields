@@ -1,7 +1,9 @@
 package com.github.rzo1.bloodfields.engine;
 
+import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.HeroSkill;
+import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitType;
 
 import java.io.BufferedWriter;
@@ -121,7 +123,29 @@ public final class ReplayRecorder {
     }
 
     public void recordStart(GameState state) {
-        commands.add(Replay.Command.start(currentTick(state)));
+        List<Replay.UnitInit> red = snapshotArmy(state, state == null ? null : state.red);
+        List<Replay.UnitInit> blue = snapshotArmy(state, state == null ? null : state.blue);
+        commands.add(Replay.Command.start(currentTick(state), red, blue));
+    }
+
+    private static List<Replay.UnitInit> snapshotArmy(GameState state, Army army) {
+        List<Replay.UnitInit> out = new ArrayList<>();
+        if (army == null) return out;
+        StructureField sf = state == null ? null : state.structures;
+        for (Unit u : army.units()) {
+            if (u == null) continue;
+            long hostId = 0L;
+            if (u.garrisoned && sf != null) {
+                Structure host = sf.structureGarrisoning(u);
+                if (host != null) hostId = host.id();
+            }
+            out.add(new Replay.UnitInit(
+                    u.id, u.type, u.faction, u.x, u.y, u.hp, u.maxHp,
+                    u.veteranRank, u.garrisoned, hostId,
+                    u.state, u.routed, u.attackCooldownRemaining,
+                    u.burningSeconds, u.burningDamagePerSec));
+        }
+        return out;
     }
 
     public void recordToggleGate(GameState state, long structureId) {
@@ -247,11 +271,60 @@ public final class ReplayRecorder {
             case SET_HP_MULT:
                 appendNumKv(sb, "value", c.x, false);
                 break;
+            case START:
+                if (!c.redUnits.isEmpty() || !c.blueUnits.isEmpty()) {
+                    sb.append(',').append(jsonStr("redUnits")).append(':');
+                    appendUnitInitArray(sb, c.redUnits);
+                    sb.append(',').append(jsonStr("blueUnits")).append(':');
+                    appendUnitInitArray(sb, c.blueUnits);
+                }
+                break;
             default:
                 break;
         }
         sb.append('}');
         return sb.toString();
+    }
+
+    private static void appendUnitInitArray(StringBuilder sb, List<Replay.UnitInit> units) {
+        sb.append('[');
+        boolean first = true;
+        for (Replay.UnitInit u : units) {
+            if (!first) sb.append(',');
+            first = false;
+            sb.append('{');
+            appendNumKv(sb, "id", u.id, true);
+            sb.append(',').append(jsonStr("type")).append(':').append(jsonStr(u.type.name()));
+            sb.append(',').append(jsonStr("faction")).append(':').append(jsonStr(u.faction.name()));
+            appendNumKv(sb, "x", u.x, false);
+            appendNumKv(sb, "y", u.y, false);
+            appendNumKv(sb, "hp", u.hp, false);
+            appendNumKv(sb, "maxHp", u.maxHp, false);
+            appendNumKv(sb, "veteranRank", u.veteranRank, false);
+            if (u.garrisoned) {
+                sb.append(',').append(jsonStr("garrisoned")).append(':').append("true");
+                if (u.hostStructureId != 0L) {
+                    appendNumKv(sb, "hostStructureId", u.hostStructureId, false);
+                }
+            }
+            if (u.state != null) {
+                sb.append(',').append(jsonStr("state")).append(':').append(jsonStr(u.state.name()));
+            }
+            if (u.routed) {
+                sb.append(',').append(jsonStr("routed")).append(':').append("true");
+            }
+            if (u.attackCooldownRemaining != 0.0) {
+                appendNumKv(sb, "attackCooldownRemaining", u.attackCooldownRemaining, false);
+            }
+            if (u.burningSeconds != 0.0) {
+                appendNumKv(sb, "burningSeconds", u.burningSeconds, false);
+            }
+            if (u.burningDamagePerSec != 0.0) {
+                appendNumKv(sb, "burningDamagePerSec", u.burningDamagePerSec, false);
+            }
+            sb.append('}');
+        }
+        sb.append(']');
     }
 
     private static void appendNumKv(StringBuilder sb, String k, double v, boolean isFirst) {

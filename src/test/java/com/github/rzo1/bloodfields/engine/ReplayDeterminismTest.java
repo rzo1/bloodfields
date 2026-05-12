@@ -77,6 +77,67 @@ class ReplayDeterminismTest {
         assertNotEquals(a1, a3, "different seed must diverge");
     }
 
+    // Issue #2 repro: BLUE units are added directly to the army (mimicking
+    // SkirmishBot / campaign Spawner, both of which bypass DeploymentController
+    // and never call rec.recordPlace). Before the fix, the replay rebuilt BLUE
+    // from PLACE commands alone and ended with an empty BLUE army, handing the
+    // win to RED after one tick. With the START-time army snapshot, BLUE's
+    // units are restored on replay and the original winner stands.
+    @Test
+    void replayRestoresArmiesAddedWithoutRecorder() {
+        World world = World.grass(WORLD_W, WORLD_H, TILE);
+        Army red = new Army(Faction.RED, 1000);
+        Army blue = new Army(Faction.BLUE, 1000);
+        SpatialHashGrid grid = new SpatialHashGrid(WORLD_W, WORLD_H, 64.0);
+        GameState state = new GameState(world, red, blue, grid);
+        state.rngSeed = 0xB07_B07L;
+        state.phase = GameState.Phase.DEPLOYMENT;
+
+        ReplayRecorder rec = new ReplayRecorder();
+        rec.captureInitial(state);
+        state.recorder = rec;
+
+        // RED: a single token infantry placed via the recorder (player flow).
+        Unit lone = new Unit(state.nextUnitId++, UnitType.INFANTRY, Faction.RED,
+                400.0, 450.0, red.hpMultiplier());
+        red.add(lone);
+        rec.recordPlace(state, Faction.RED, UnitType.INFANTRY, lone.x, lone.y);
+
+        // BLUE: SIX infantry added DIRECTLY to the army, no recordPlace.
+        // This is what SkirmishBot / Spawner do today.
+        for (int i = 0; i < 6; i++) {
+            double bx = 200.0 + i * 50.0;
+            double by = 150.0;
+            Unit u = new Unit(state.nextUnitId++, UnitType.INFANTRY, Faction.BLUE,
+                    bx, by, blue.hpMultiplier());
+            blue.add(u);
+        }
+
+        rec.recordStart(state);
+        state.phase = GameState.Phase.BATTLE;
+
+        GameLoop loop = new GameLoop(state, new UnitAI());
+        for (int i = 0; i < MAX_TICKS; i++) {
+            loop.step(DT);
+            if (state.checkVictory() != null) break;
+        }
+        // Sanity: BLUE outnumbers RED 6-to-1 so BLUE should win live.
+        assertEquals(Faction.BLUE, state.checkVictory(),
+                "live: BLUE should win 6v1");
+        assertTrue(countAlive(state.blue) > 0, "live BLUE survivors > 0");
+
+        // Replay must produce the same winner and a matching BLUE survivor
+        // count — *not* an instant RED win caused by an empty BLUE army.
+        ReplayPlayer rp = ReplayPlayer.load(rec.toText());
+        rp.run(MAX_TICKS);
+        assertEquals(Faction.BLUE, rp.state().checkVictory(),
+                "replay: BLUE should still win 6v1 — issue #2 regression");
+        assertEquals(countAlive(state.blue), countAlive(rp.state().blue),
+                "replay: BLUE survivor count");
+        assertEquals(countAlive(state.red), countAlive(rp.state().red),
+                "replay: RED survivor count");
+    }
+
     @Test
     void cliReplayPrintsFinalState() throws Exception {
         ScenarioRun live = runLive(0xFEEDFACEL);

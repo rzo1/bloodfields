@@ -7,6 +7,7 @@ import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.HeroSkill;
 import com.github.rzo1.bloodfields.model.Terrain;
 import com.github.rzo1.bloodfields.model.Unit;
+import com.github.rzo1.bloodfields.model.UnitState;
 import com.github.rzo1.bloodfields.model.UnitType;
 
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +39,10 @@ public final class ReplayPlayer {
     private GameState state;
     private GameLoop loop;
     private double dtPerTick = DEFAULT_DT;
+    /** Tick at which the START command fires, or -1 if not seen. */
+    private long startTick = -1L;
+    /** Whether the START command carries a unit snapshot (post-fix replays). */
+    private boolean startHasSnapshot;
 
     public static ReplayPlayer load(Path path) throws IOException {
         return load(Files.readString(path, StandardCharsets.UTF_8));
@@ -123,7 +129,14 @@ public final class ReplayPlayer {
             String l = lines[i].trim();
             if (l.isEmpty()) continue;
             Map<String, Object> m = Json.parseObject(l);
-            commands.add(parseCommand(m));
+            Replay.Command cmd = parseCommand(m);
+            commands.add(cmd);
+            if (cmd.op == Replay.Op.START) {
+                startTick = cmd.tick;
+                if (!cmd.redUnits.isEmpty() || !cmd.blueUnits.isEmpty()) {
+                    startHasSnapshot = true;
+                }
+            }
         }
     }
 
@@ -195,9 +208,42 @@ public final class ReplayPlayer {
             case SET_RESERVE_BUDGET -> Replay.Command.setReserveBudget(tick, faction,
                     (int) readLong(m.get("value")));
             case ACTIVATE_RESERVES -> Replay.Command.activateReserves(tick, faction);
-            case START -> Replay.Command.start(tick);
+            case START -> Replay.Command.start(tick,
+                    parseUnitInitArray(m.get("redUnits")),
+                    parseUnitInitArray(m.get("blueUnits")));
             case TOGGLE_GATE -> Replay.Command.toggleGate(tick, structureId);
         };
+    }
+
+    private static List<Replay.UnitInit> parseUnitInitArray(Object o) {
+        if (!(o instanceof List<?> raw)) return Collections.emptyList();
+        List<Replay.UnitInit> out = new ArrayList<>(raw.size());
+        for (Object e : raw) {
+            if (!(e instanceof Map<?, ?> mo)) continue;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> uo = (Map<String, Object>) mo;
+            UnitType t = parseEnum(uo.get("type"), UnitType.class);
+            Faction f = parseEnum(uo.get("faction"), Faction.class);
+            if (t == null || f == null) continue;
+            UnitState st = parseEnum(uo.get("state"), UnitState.class);
+            out.add(new Replay.UnitInit(
+                    readLong(uo.get("id")),
+                    t,
+                    f,
+                    readDouble(uo.get("x")),
+                    readDouble(uo.get("y")),
+                    readDouble(uo.get("hp")),
+                    readDouble(uo.get("maxHp")),
+                    (int) readLong(uo.get("veteranRank")),
+                    Boolean.TRUE.equals(uo.get("garrisoned")),
+                    uo.containsKey("hostStructureId") ? readLong(uo.get("hostStructureId")) : 0L,
+                    st,
+                    Boolean.TRUE.equals(uo.get("routed")),
+                    readDouble(uo.get("attackCooldownRemaining")),
+                    readDouble(uo.get("burningSeconds")),
+                    readDouble(uo.get("burningDamagePerSec"))));
+        }
+        return out;
     }
 
     private static <E extends Enum<E>> E parseEnum(Object o, Class<E> cls) {
@@ -289,9 +335,82 @@ public final class ReplayPlayer {
         return out;
     }
 
+    private void restoreArmySnapshot(Replay.Command c) {
+        clearArmy(state.red);
+        clearArmy(state.blue);
+        long maxId = state.nextUnitId - 1;
+        Map<Long, Unit> byId = new HashMap<>();
+        for (Replay.UnitInit ui : c.redUnits) {
+            Unit u = constructUnit(ui);
+            state.red.add(u);
+            byId.put(u.id, u);
+            if (u.id > maxId) maxId = u.id;
+        }
+        for (Replay.UnitInit ui : c.blueUnits) {
+            Unit u = constructUnit(ui);
+            state.blue.add(u);
+            byId.put(u.id, u);
+            if (u.id > maxId) maxId = u.id;
+        }
+        state.nextUnitId = maxId + 1;
+        // Re-attach garrisoned units to their host structures after both
+        // armies are populated.
+        StructureField sf = state.structures;
+        if (sf != null) {
+            for (Replay.UnitInit ui : c.redUnits) {
+                attachGarrison(sf, byId.get(ui.id), ui);
+            }
+            for (Replay.UnitInit ui : c.blueUnits) {
+                attachGarrison(sf, byId.get(ui.id), ui);
+            }
+        }
+    }
+
+    private static void clearArmy(Army army) {
+        if (army == null) return;
+        List<Unit> snapshot = new ArrayList<>(army.units());
+        for (Unit u : snapshot) army.remove(u);
+    }
+
+    private static Unit constructUnit(Replay.UnitInit ui) {
+        // veteranRank applied via the dedicated ctor so maxHp gets the rank
+        // bonus before we overwrite with the recorded value.
+        Unit u = new Unit(ui.id, ui.type, ui.faction, ui.x, ui.y, 1.0, ui.veteranRank);
+        u.maxHp = ui.maxHp;
+        u.hp = ui.hp;
+        if (ui.state != null) u.state = ui.state;
+        u.routed = ui.routed;
+        u.attackCooldownRemaining = ui.attackCooldownRemaining;
+        u.burningSeconds = ui.burningSeconds;
+        u.burningDamagePerSec = ui.burningDamagePerSec;
+        return u;
+    }
+
+    private static void attachGarrison(StructureField sf, Unit u, Replay.UnitInit ui) {
+        if (u == null || !ui.garrisoned || ui.hostStructureId == 0L) return;
+        Structure host = null;
+        for (Structure s : sf.structures()) {
+            if (s.id() == ui.hostStructureId) { host = s; break; }
+        }
+        if (host == null) return;
+        sf.garrison(host, u);
+        // garrison() snaps position to the structure's center; restore the
+        // recorded position so determinism is preserved.
+        u.x = ui.x;
+        u.y = ui.y;
+    }
+
     private void apply(Replay.Command c) {
         switch (c.op) {
             case PLACE -> {
+                // PLACE events at or before the START tick are redundant with
+                // the START snapshot (the snapshot is the authoritative
+                // initial state for issue #2 — bot/spawner units never emitted
+                // PLACE in the first place). Pre-snapshot replays don't carry
+                // a snapshot, so we still apply PLACE in that case to remain
+                // backwards compatible. PLACE after START (e.g. reserve
+                // activations) is always applied.
+                if (startHasSnapshot && c.tick <= startTick) return;
                 Army army = state.armyOf(c.faction);
                 if (army == null || c.unitType == null) return;
                 Unit u = new Unit(state.nextUnitId++, c.unitType, c.faction,
@@ -334,7 +453,12 @@ public final class ReplayPlayer {
                 Army army = state.armyOf(c.faction);
                 if (army != null) army.activateReserves();
             }
-            case START -> state.phase = GameState.Phase.BATTLE;
+            case START -> {
+                if (!c.redUnits.isEmpty() || !c.blueUnits.isEmpty()) {
+                    restoreArmySnapshot(c);
+                }
+                state.phase = GameState.Phase.BATTLE;
+            }
             case TOGGLE_GATE -> {
                 if (state.structures == null) return;
                 for (Structure s : state.structures.structures()) {
