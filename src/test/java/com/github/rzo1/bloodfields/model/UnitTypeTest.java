@@ -79,7 +79,7 @@ class UnitTypeTest {
         assertEquals(35.0, UnitType.CATAPULT.damage(), 1e-9);
         assertEquals(240.0, UnitType.CATAPULT.attackRange(), 1e-9);
         assertEquals(15.0, UnitType.CATAPULT.speed(), 1e-9);
-        assertEquals(4.0, UnitType.CATAPULT.attackCooldownSeconds(), 1e-9);
+        assertEquals(5.5, UnitType.CATAPULT.attackCooldownSeconds(), 1e-9);
         assertEquals(60, UnitType.CATAPULT.cost());
         assertEquals(70.0, UnitType.CATAPULT.splashRadius(), 1e-9);
         assertTrue(UnitType.CATAPULT.ranged());
