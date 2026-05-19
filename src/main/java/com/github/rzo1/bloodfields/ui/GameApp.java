@@ -260,6 +260,15 @@ public class GameApp extends Application {
         }.start();
     }
 
+    @Override
+    public void stop() {
+        // Java Sound (javax.sound.sampled) spawns non-daemon mixer threads that
+        // can keep the JVM alive after Platform.exit() / window close on macOS,
+        // leaving the process running invisibly. Force the JVM down so closing
+        // the game actually closes the game.
+        System.exit(0);
+    }
+
     private boolean handleReserveHotkey(KeyCode code) {
         if (versus == null) return false;
         if (code == KeyCode.R) {
