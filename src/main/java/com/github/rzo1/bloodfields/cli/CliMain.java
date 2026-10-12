@@ -54,6 +54,7 @@ public final class CliMain {
                 case "play" -> play(args, in, out, err);
                 case "sim" -> sim(args, out, err);
                 case "replay" -> replay(args, out, err);
+                case "telnet" -> telnet(args, out, err);
                 default -> {
                     err.println("Unknown command: " + cmd);
                     printHelp(err);
@@ -84,6 +85,11 @@ public final class CliMain {
         out.println("    --max-ticks=N       Max ticks (default " + DEFAULT_MAX_TICKS + ").");
         out.println("  replay <file>         Replay a recorded battle headlessly.");
         out.println("    --max-ticks=N       Max ticks (default " + DEFAULT_MAX_TICKS + ").");
+        out.println("  telnet                Start the Commodore 64 PETSCII telnet server.");
+        out.println("    --port=N            Listen port (default "
+                + com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_PORT + ").");
+        out.println("    --sessions=N        Max concurrent sessions (default "
+                + com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_MAX_SESSIONS + ").");
         out.println("  help                  This message.");
         out.println();
         out.println("Play commands (one JSON object per line):");
@@ -522,6 +528,55 @@ public final class CliMain {
             Unit unit = new Unit(game.state().nextUnitId++, type, faction, x, y, army.hpMultiplier());
             army.add(unit);
         }
+    }
+
+    // ----- telnet -----
+
+    private static int telnet(String[] args, PrintStream out, PrintStream err) {
+        int port = com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_PORT;
+        int maxSessions = com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_MAX_SESSIONS;
+        for (int i = 1; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--port=")) {
+                try {
+                    port = Integer.parseInt(a.substring(7));
+                } catch (NumberFormatException nfe) {
+                    err.println("Bad --port: " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--sessions=")) {
+                try {
+                    maxSessions = Integer.parseInt(a.substring(11));
+                } catch (NumberFormatException nfe) {
+                    err.println("Bad --sessions: " + a);
+                    return 2;
+                }
+            } else {
+                err.println("Unknown flag: " + a);
+                return 2;
+            }
+        }
+        if (port < 0 || port > 65535) {
+            err.println("Bad --port: " + port);
+            return 2;
+        }
+        if (maxSessions < 1) {
+            err.println("Bad --sessions: " + maxSessions);
+            return 2;
+        }
+        com.github.rzo1.bloodfields.telnet.TelnetServer server =
+                new com.github.rzo1.bloodfields.telnet.TelnetServer(port, maxSessions);
+        try {
+            server.start();
+        } catch (IOException ex) {
+            err.println("Error: " + ex.getMessage());
+            return 1;
+        }
+        out.println("Bloodfield C64 telnet server listening on port " + server.port()
+                + " (max " + maxSessions + " sessions). Press Ctrl+C to stop.");
+        out.flush();
+        server.await();
+        return 0;
     }
 
     // ----- shared -----

@@ -94,6 +94,39 @@ printf '%s\n' \
 
 A `bin/bloodfields-cli` wrapper is included.
 
+## C64 telnet server (PETSCII)
+
+There is a telnet server frontend that plays the whole game — menus, campaign,
+skirmish, deployment, real-time battle — in PETSCII on a Commodore 64's
+40x25 color text screen. The world is 1280x800 on 32-pixel tiles, so the
+battlefield maps almost 1:1 onto the C64's 40x25 characters: one tile, one
+character cell, faction carried by color RAM (you are light red, the enemy is
+light blue).
+
+```bash
+mvn -DskipTests package
+java -cp target/bloodfields-1.2.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain telnet --port=6400
+```
+
+![Fortress battle on the C64 screen](docs/screenshots/c64/10-battle-fortress-start.png)
+
+Then connect from your C64 with a PETSCII terminal (CCGMS, StrikeTerm) over a
+WiFi modem / RR-Net / emulator RS-232 bridge and `ATDT host:6400`. From a PC,
+use a PETSCII-capable terminal; a plain UTF-8 telnet client will show the
+letters but not the colors or graphics.
+
+- Campaign: all 11 levels, victory prints the next level code.
+- Skirmish: pick a map, a budget (100-10000), and enemy dragon opt-in; the
+  bot deploys against you.
+- Deployment: cursor keys move, `1`-`0`/`G` pick a unit, `SPACE` places,
+  `DEL` removes, `K` cycles the hero skill, `S` starts the battle.
+- Battle: `1`-`4` set speed (0.5x-4x), `P` pauses, `Q` resigns.
+
+The renderer diffs frames and only re-sends rows that changed, so it stays
+playable at 9600 baud. Necromancers work: deaths are tracked server-side and
+fed into the corpse field. Weather is shown but (like the rest of the CLI)
+does not alter combat. Code lives in `com.github.rzo1.bloodfields.telnet`.
+
 ## Native installer
 
 Bloodfield can be packaged as a native installer that bundles its own JRE, so
