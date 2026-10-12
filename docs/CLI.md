@@ -123,7 +123,7 @@ For campaign specs the enemy is auto-spawned from the level's spawner; pass `--b
 bin/bloodfields-cli sim 1 --red=examples/red.json
 ```
 
-### `telnet [--port=N] [--sessions=N]`
+### `telnet [--port=N] [--sessions=N] [--proxy=host:port]`
 
 Starts a Commodore 64 telnet server that serves the game in PETSCII (40x25
 color text mode). Lives in `com.github.rzo1.bloodfields.telnet`. Default port
@@ -154,6 +154,45 @@ Captured from a live session (PETSCII stream rendered with the C64 palette):
 
 The full set of screens (menu, help, level select, unit keys, deployment,
 battle, result, goodbye) is in [`docs/screenshots/c64/`](screenshots/c64/).
+
+With `--proxy=host:port` the telnet server does not run local games at all:
+each session joins the 2-player gRPC match at the given address as a player
+(RED or BLUE, first come first served). Two C64s (or a C64 and any other
+client speaking the contract) can then fight the same battle. The proxy flow
+mirrors the streamed match phases: a war-council lobby (RED picks map /
+budget / dragons with `M`/`B`/`D`, `R` readies up), deployment into your own
+half, the live battle (`1`-`4` speed, `P` pause, `Q` resign, `5` save, `6`
+restore the last snapshot this session received), and the result screen
+(`R` votes for a rematch).
+
+### `grpc-server [--port=N]`
+
+Hosts one 2-player match over gRPC (default port 6411). The API is a single
+bidirectional streaming RPC — `Bloodfield.Play(stream PlayerMessage) returns
+(stream GameMessage)`, see `src/main/proto/bloodfield.proto`; there are no
+unary calls, and the same contract serves the hosting side and the joining
+side alike.
+
+```bash
+java -cp target/bloodfields-1.2.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain grpc-server --port=6411
+```
+
+- First stream to join plays RED (the host, who configures the match), the
+  second plays BLUE; a third is told the match is full.
+- The server is authoritative: it validates placement (zone, budget, caps)
+  and runs the battle simulation at 60 Hz, broadcasting state frames about
+  four times per second.
+- Either player can save the match at any time after the lobby: the server
+  snapshots the full state and sends the bytes to **both** players. Either
+  player can later send a snapshot back to restore the match to exactly that
+  point, mid-battle included. Snapshots are opaque, versioned protobuf blobs
+  (`Snapshot`) — store them wherever you like.
+- After a battle ends, both players readying up starts a rematch on the same
+  configuration. A disconnect before the battle resets the match to the
+  lobby; a disconnect mid-battle leaves the abandoned army standing until
+  the result is decided.
+
+Any gRPC client can play; `telnet --proxy=...` (above) is the built-in one.
 
 ## Notes
 

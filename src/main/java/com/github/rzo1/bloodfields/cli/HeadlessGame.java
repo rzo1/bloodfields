@@ -58,6 +58,13 @@ public final class HeadlessGame {
     public ZoneRect zone() { return zone; }
     public double simTime() { return simTime; }
 
+    public void setSimTime(double t) { this.simTime = t; }
+
+    public ZoneRect zoneFor(Faction f) {
+        if (f == Faction.BLUE) return new ZoneRect(0.0, 0.0, WIDTH, HEIGHT / 2.0);
+        return zone;
+    }
+
     public void setPlayerCap(UnitType type, int max) {
         player().setCap(type, max);
     }
@@ -75,11 +82,16 @@ public final class HeadlessGame {
     }
 
     public PlaceResult place(UnitType type, double x, double y) {
+        return place(PLAYER_FACTION, type, x, y);
+    }
+
+    public PlaceResult place(Faction f, UnitType type, double x, double y) {
         if (type == null) return PlaceResult.fail("type is null");
         if (state.phase != GameState.Phase.DEPLOYMENT) {
             return PlaceResult.fail("not in deployment phase");
         }
-        Army army = player();
+        Army army = state.armyOf(f);
+        ZoneRect z = zoneFor(f);
         if (type.unique()) {
             for (Unit u : army.units()) {
                 if (u.type == type) return PlaceResult.fail("unique type already placed");
@@ -91,7 +103,7 @@ public final class HeadlessGame {
         double[] snapped = snap(x, y);
         double sx = snapped[0];
         double sy = snapped[1];
-        if (!zone.contains(sx, sy)) {
+        if (!z.contains(sx, sy)) {
             return PlaceResult.fail("outside deployment zone");
         }
         if (state.world != null && !state.world.passableAt(sx, sy)) {
@@ -109,8 +121,12 @@ public final class HeadlessGame {
     }
 
     public boolean remove(double x, double y) {
+        return remove(PLAYER_FACTION, x, y);
+    }
+
+    public boolean remove(Faction f, double x, double y) {
         if (state.phase != GameState.Phase.DEPLOYMENT) return false;
-        Army army = player();
+        Army army = state.armyOf(f);
         Unit best = null;
         double bestD2 = 24.0 * 24.0;
         for (Unit u : army.units()) {

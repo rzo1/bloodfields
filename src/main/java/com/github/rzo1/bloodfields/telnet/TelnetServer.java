@@ -22,6 +22,8 @@ public final class TelnetServer implements AutoCloseable {
 
     private final int requestedPort;
     private final int maxSessions;
+    private final String proxyHost;
+    private final int proxyPort;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private final AtomicInteger active = new AtomicInteger();
     private volatile boolean running;
@@ -29,8 +31,20 @@ public final class TelnetServer implements AutoCloseable {
     private Thread acceptThread;
 
     public TelnetServer(int port, int maxSessions) {
+        this(port, maxSessions, null, 0);
+    }
+
+    /**
+     * @param proxyHost when non-{@code null}, every accepted session is served
+     *                  by a {@link ProxySession} bridging into the gRPC match
+     *                  server at {@code proxyHost:proxyPort} instead of a local
+     *                  {@link TelnetSession} game
+     */
+    public TelnetServer(int port, int maxSessions, String proxyHost, int proxyPort) {
         this.requestedPort = port;
         this.maxSessions = maxSessions;
+        this.proxyHost = proxyHost;
+        this.proxyPort = proxyPort;
     }
 
     public void start() throws IOException {
@@ -86,7 +100,10 @@ public final class TelnetServer implements AutoCloseable {
             clients.add(s);
             Thread t = new Thread(() -> {
                 try {
-                    new TelnetSession(s).run();
+                    Runnable session = proxyHost == null
+                            ? new TelnetSession(s)
+                            : new ProxySession(s, proxyHost, proxyPort);
+                    session.run();
                 } finally {
                     clients.remove(s);
                     active.decrementAndGet();

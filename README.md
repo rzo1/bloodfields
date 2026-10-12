@@ -127,6 +127,42 @@ playable at 9600 baud. Necromancers work: deaths are tracked server-side and
 fed into the corpse field. Weather is shown but (like the rest of the CLI)
 does not alter combat. Code lives in `com.github.rzo1.bloodfields.telnet`.
 
+Add `--proxy=host:port` and the telnet server becomes a frontend for a remote
+2-player gRPC match instead of local play (see below).
+
+## Two-player over gRPC
+
+`grpc-server` hosts one 2-player match over a single long-lived bidirectional
+streaming RPC — there are no unary calls; both players keep a `Play` stream
+open for the whole match. The contract is symmetric: the hosting side and the
+joining side use the same stream, so the host plays through exactly the same
+client interface as the guest (and so does the telnet proxy).
+
+```bash
+java -cp target/bloodfields-1.2.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain grpc-server --port=6411
+```
+
+Match flow: both players join → lobby (first player configures map, budget,
+dragons; both ready-up) → deployment (each side places into its own half of
+the field) → real-time battle streamed at ~4 Hz (either side can set speed,
+pause, or resign) → result → rematch vote. **Both sides can save and restore
+state**: a save request snapshots the full match and delivers the bytes to
+*both* players; either player can later push a snapshot back to resume the
+match from it (mid-battle included).
+
+The contract is one file, [`src/main/proto/bloodfield.proto`](src/main/proto/bloodfield.proto),
+and any gRPC client can play. The telnet server proxies it, so two C64s can
+fight each other over the internet:
+
+```bash
+# machine A hosts the match
+java -cp ... CliMain grpc-server --port=6411
+# machine A (or anywhere) serves PETSCII sessions bridged to the match
+java -cp ... CliMain telnet --port=6400 --proxy=hostA:6411
+```
+
+Code lives in `com.github.rzo1.bloodfields.net`.
+
 ## Native installer
 
 Bloodfield can be packaged as a native installer that bundles its own JRE, so

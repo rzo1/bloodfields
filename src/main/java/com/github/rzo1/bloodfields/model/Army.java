@@ -55,6 +55,10 @@ public final class Army {
 
     public int deploymentBudget() { return deploymentBudget; }
 
+    public void setDeploymentBudget(int v) {
+        this.deploymentBudget = Math.max(0, v);
+    }
+
     public int reserveBudget() { return reserveBudget; }
 
     public void setReserveBudget(int v) {

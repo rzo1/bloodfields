@@ -55,6 +55,7 @@ public final class CliMain {
                 case "sim" -> sim(args, out, err);
                 case "replay" -> replay(args, out, err);
                 case "telnet" -> telnet(args, out, err);
+                case "grpc-server" -> grpcServer(args, out, err);
                 default -> {
                     err.println("Unknown command: " + cmd);
                     printHelp(err);
@@ -90,6 +91,11 @@ public final class CliMain {
                 + com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_PORT + ").");
         out.println("    --sessions=N        Max concurrent sessions (default "
                 + com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_MAX_SESSIONS + ").");
+        out.println("    --proxy=host:port   Bridge telnet sessions into a remote 2-player gRPC");
+        out.println("                        match as player seats (run 'grpc-server' there).");
+        out.println("  grpc-server           Start the 2-player gRPC match server.");
+        out.println("    --port=N            Listen port (default "
+                + com.github.rzo1.bloodfields.net.GrpcMatchServer.DEFAULT_PORT + ").");
         out.println("  help                  This message.");
         out.println();
         out.println("Play commands (one JSON object per line):");
@@ -535,6 +541,7 @@ public final class CliMain {
     private static int telnet(String[] args, PrintStream out, PrintStream err) {
         int port = com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_PORT;
         int maxSessions = com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_MAX_SESSIONS;
+        String proxy = null;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--port=")) {
@@ -551,10 +558,36 @@ public final class CliMain {
                     err.println("Bad --sessions: " + a);
                     return 2;
                 }
+            } else if (a.startsWith("--proxy=")) {
+                proxy = a.substring(8);
+                if (proxy.isEmpty()) {
+                    err.println("Bad --proxy: " + a);
+                    return 2;
+                }
             } else {
                 err.println("Unknown flag: " + a);
                 return 2;
             }
+        }
+        String proxyHost = null;
+        int proxyPort = -1;
+        if (proxy != null) {
+            int colon = proxy.lastIndexOf(':');
+            if (colon <= 0 || colon == proxy.length() - 1) {
+                err.println("Bad --proxy (expected host:port): " + proxy);
+                return 1;
+            }
+            try {
+                proxyPort = Integer.parseInt(proxy.substring(colon + 1));
+            } catch (NumberFormatException nfe) {
+                err.println("Bad --proxy (expected host:port): " + proxy);
+                return 1;
+            }
+            if (proxyPort < 1 || proxyPort > 65535) {
+                err.println("Bad --proxy (expected host:port): " + proxy);
+                return 1;
+            }
+            proxyHost = proxy.substring(0, colon);
         }
         if (port < 0 || port > 65535) {
             err.println("Bad --port: " + port);
@@ -565,7 +598,8 @@ public final class CliMain {
             return 2;
         }
         com.github.rzo1.bloodfields.telnet.TelnetServer server =
-                new com.github.rzo1.bloodfields.telnet.TelnetServer(port, maxSessions);
+                new com.github.rzo1.bloodfields.telnet.TelnetServer(port, maxSessions,
+                        proxyHost, proxyPort);
         try {
             server.start();
         } catch (IOException ex) {
@@ -573,9 +607,47 @@ public final class CliMain {
             return 1;
         }
         out.println("Bloodfield C64 telnet server listening on port " + server.port()
+                + (proxyHost != null ? ", proxying to gRPC match at " + proxyHost + ":" + proxyPort : "")
                 + " (max " + maxSessions + " sessions). Press Ctrl+C to stop.");
         out.flush();
         server.await();
+        return 0;
+    }
+
+    // ----- grpc-server -----
+
+    private static int grpcServer(String[] args, PrintStream out, PrintStream err) {
+        int port = com.github.rzo1.bloodfields.net.GrpcMatchServer.DEFAULT_PORT;
+        for (int i = 1; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--port=")) {
+                try {
+                    port = Integer.parseInt(a.substring(7));
+                } catch (NumberFormatException nfe) {
+                    err.println("Bad --port: " + a);
+                    return 2;
+                }
+            } else {
+                err.println("Unknown flag: " + a);
+                return 2;
+            }
+        }
+        if (port < 0 || port > 65535) {
+            err.println("Bad --port: " + port);
+            return 2;
+        }
+        com.github.rzo1.bloodfields.net.GrpcMatchServer server =
+                new com.github.rzo1.bloodfields.net.GrpcMatchServer(port);
+        try {
+            server.start();
+        } catch (java.io.IOException ex) {
+            err.println("Error: " + ex.getMessage());
+            return 1;
+        }
+        out.println("Bloodfield gRPC match server on port " + server.port()
+                + ". Press Ctrl+C to stop.");
+        out.flush();
+        server.blockUntilShutdown();
         return 0;
     }
 
