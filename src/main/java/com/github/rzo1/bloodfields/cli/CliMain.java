@@ -9,6 +9,13 @@ import com.github.rzo1.bloodfields.model.HeroSkill;
 import com.github.rzo1.bloodfields.model.Terrain;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitType;
+import com.github.rzo1.bloodfields.net.MeshClient;
+import com.github.rzo1.bloodfields.net.ProfileStore;
+import com.github.rzo1.bloodfields.net.SaveStore;
+import com.github.rzo1.bloodfields.net.proto.Leaderboard;
+import com.github.rzo1.bloodfields.net.proto.LeaderboardEntry;
+import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
+import com.github.rzo1.bloodfields.net.proto.SaveMeta;
 import com.github.rzo1.bloodfields.ui.Level;
 import com.github.rzo1.bloodfields.ui.LevelCodes;
 import com.github.rzo1.bloodfields.ui.Levels;
@@ -56,6 +63,9 @@ public final class CliMain {
                 case "replay" -> replay(args, out, err);
                 case "telnet" -> telnet(args, out, err);
                 case "grpc-server" -> grpcServer(args, out, err);
+                case "profile" -> profile(args, out, err);
+                case "saves" -> saves(args, out, err);
+                case "mesh" -> mesh(args, out, err);
                 default -> {
                     err.println("Unknown command: " + cmd);
                     printHelp(err);
@@ -93,9 +103,18 @@ public final class CliMain {
                 + com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_MAX_SESSIONS + ").");
         out.println("    --proxy=host:port   Bridge telnet sessions into a remote 2-player gRPC");
         out.println("                        match as player seats (run 'grpc-server' there).");
+        out.println("    --name=NAME         Player name for proxied sessions (profile id stays");
+        out.println("                        the machine's; concurrent sessions get -2, -3...).");
         out.println("  grpc-server           Start the 2-player gRPC match server.");
         out.println("    --port=N            Listen port (default "
                 + com.github.rzo1.bloodfields.net.GrpcMatchServer.DEFAULT_PORT + ").");
+        out.println("    --data-dir=DIR      Saves/records/profile directory (default ~/.bloodfield).");
+        out.println("  profile [--name=NAME] [--data-dir=DIR]");
+        out.println("                        Show this player's profile as JSON; --name updates it.");
+        out.println("  saves [--data-dir=DIR]");
+        out.println("                        List local saves as a JSON array.");
+        out.println("  mesh --peer=host:port [--data-dir=DIR]");
+        out.println("                        Sync match records and leaderboards with a peer.");
         out.println("  help                  This message.");
         out.println();
         out.println("Play commands (one JSON object per line):");
@@ -542,6 +561,7 @@ public final class CliMain {
         int port = com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_PORT;
         int maxSessions = com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_MAX_SESSIONS;
         String proxy = null;
+        String name = null;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--port=")) {
@@ -562,6 +582,12 @@ public final class CliMain {
                 proxy = a.substring(8);
                 if (proxy.isEmpty()) {
                     err.println("Bad --proxy: " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--name=")) {
+                name = a.substring(7);
+                if (name.isBlank()) {
+                    err.println("Bad --name: " + a);
                     return 2;
                 }
             } else {
@@ -599,7 +625,7 @@ public final class CliMain {
         }
         com.github.rzo1.bloodfields.telnet.TelnetServer server =
                 new com.github.rzo1.bloodfields.telnet.TelnetServer(port, maxSessions,
-                        proxyHost, proxyPort);
+                        proxyHost, proxyPort, name);
         try {
             server.start();
         } catch (IOException ex) {
@@ -618,6 +644,7 @@ public final class CliMain {
 
     private static int grpcServer(String[] args, PrintStream out, PrintStream err) {
         int port = com.github.rzo1.bloodfields.net.GrpcMatchServer.DEFAULT_PORT;
+        Path dataDir = defaultDataDir();
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--port=")) {
@@ -627,6 +654,12 @@ public final class CliMain {
                     err.println("Bad --port: " + a);
                     return 2;
                 }
+            } else if (a.startsWith("--data-dir=")) {
+                if (a.substring(11).isEmpty()) {
+                    err.println("Bad --data-dir: " + a);
+                    return 2;
+                }
+                dataDir = Path.of(a.substring(11));
             } else {
                 err.println("Unknown flag: " + a);
                 return 2;
@@ -637,7 +670,7 @@ public final class CliMain {
             return 2;
         }
         com.github.rzo1.bloodfields.net.GrpcMatchServer server =
-                new com.github.rzo1.bloodfields.net.GrpcMatchServer(port);
+                new com.github.rzo1.bloodfields.net.GrpcMatchServer(port, dataDir);
         try {
             server.start();
         } catch (java.io.IOException ex) {
@@ -645,10 +678,154 @@ public final class CliMain {
             return 1;
         }
         out.println("Bloodfield gRPC match server on port " + server.port()
-                + ". Press Ctrl+C to stop.");
+                + " (data dir " + dataDir + "). Press Ctrl+C to stop.");
+        out.println("Profile: " + server.profile().getName()
+                + " [" + server.profile().getPlayerId() + "]");
         out.flush();
         server.blockUntilShutdown();
         return 0;
+    }
+
+    // ----- profile / saves / mesh -----
+
+    private static Path defaultDataDir() {
+        return Path.of(System.getProperty("user.home"), ".bloodfield");
+    }
+
+    private static int profile(String[] args, PrintStream out, PrintStream err) {
+        String name = null;
+        Path dataDir = defaultDataDir();
+        for (int i = 1; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--name=")) {
+                name = a.substring(7);
+            } else if (a.startsWith("--data-dir=")) {
+                if (a.substring(11).isEmpty()) {
+                    err.println("Bad --data-dir: " + a);
+                    return 2;
+                }
+                dataDir = Path.of(a.substring(11));
+            } else {
+                err.println("Unknown flag: " + a);
+                return 2;
+            }
+        }
+        try {
+            if (name != null) ProfileStore.saveName(dataDir, name);
+            PlayerProfile p = ProfileStore.loadOrCreate(dataDir);
+            out.println(Json.obj()
+                    .str("playerId", p.getPlayerId())
+                    .str("name", p.getName())
+                    .num("createdEpochMs", ProfileStore.createdEpochMs(dataDir))
+                    .build());
+            return 0;
+        } catch (IllegalArgumentException ex) {
+            err.println(ex.getMessage());
+            return 2;
+        }
+    }
+
+    private static int saves(String[] args, PrintStream out, PrintStream err) {
+        Path dataDir = defaultDataDir();
+        for (int i = 1; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--data-dir=")) {
+                if (a.substring(11).isEmpty()) {
+                    err.println("Bad --data-dir: " + a);
+                    return 2;
+                }
+                dataDir = Path.of(a.substring(11));
+            } else {
+                err.println("Unknown flag: " + a);
+                return 2;
+            }
+        }
+        Json.Arr arr = Json.arr();
+        for (SaveMeta meta : SaveStore.at(dataDir).list()) {
+            arr.add(Json.obj()
+                    .str("saveId", meta.getSaveId())
+                    .str("label", meta.getLabel())
+                    .num("createdEpochMs", meta.getCreatedEpochMs())
+                    .str("savedBy", meta.getSavedBy())
+                    .str("mapId", meta.getMapId())
+                    .num("budget", meta.getBudget())
+                    .str("phase", meta.getPhase().name())
+                    .num("tick", meta.getTick())
+                    .num("sizeBytes", meta.getSizeBytes())
+                    .build());
+        }
+        out.println(arr.build());
+        return 0;
+    }
+
+    private static int mesh(String[] args, PrintStream out, PrintStream err) {
+        String peer = null;
+        Path dataDir = defaultDataDir();
+        for (int i = 1; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--peer=")) {
+                peer = a.substring(7);
+            } else if (a.startsWith("--data-dir=")) {
+                if (a.substring(11).isEmpty()) {
+                    err.println("Bad --data-dir: " + a);
+                    return 2;
+                }
+                dataDir = Path.of(a.substring(11));
+            } else {
+                err.println("Unknown flag: " + a);
+                return 2;
+            }
+        }
+        if (peer == null || peer.isEmpty()) {
+            err.println("Usage: mesh --peer=host:port [--data-dir=DIR]");
+            return 2;
+        }
+        int colon = peer.lastIndexOf(':');
+        int port;
+        if (colon <= 0 || colon == peer.length() - 1) {
+            err.println("Bad --peer (expected host:port): " + peer);
+            return 2;
+        }
+        try {
+            port = Integer.parseInt(peer.substring(colon + 1));
+        } catch (NumberFormatException nfe) {
+            err.println("Bad --peer (expected host:port): " + peer);
+            return 2;
+        }
+        if (port < 1 || port > 65535) {
+            err.println("Bad --peer (expected host:port): " + peer);
+            return 2;
+        }
+        String host = peer.substring(0, colon);
+        try {
+            out.println(boardJson(MeshClient.sync(host, port, dataDir)));
+            return 0;
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            err.println("Interrupted");
+            return 1;
+        } catch (RuntimeException ex) {
+            err.println("Mesh sync failed: " + ex.getMessage());
+            return 1;
+        }
+    }
+
+    private static String boardJson(Leaderboard board) {
+        Json.Arr entries = Json.arr();
+        for (LeaderboardEntry e : board.getEntriesList()) {
+            entries.add(Json.obj()
+                    .str("playerId", e.getPlayerId())
+                    .str("name", e.getName())
+                    .num("games", e.getGames())
+                    .num("wins", e.getWins())
+                    .num("losses", e.getLosses())
+                    .num("draws", e.getDraws())
+                    .build());
+        }
+        return Json.obj()
+                .kv("entries", entries.build())
+                .num("totalRecords", board.getTotalRecords())
+                .build();
     }
 
     // ----- shared -----

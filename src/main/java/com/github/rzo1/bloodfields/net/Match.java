@@ -8,12 +8,17 @@ import com.github.rzo1.bloodfields.model.UnitType;
 import com.github.rzo1.bloodfields.net.proto.BattleControl;
 import com.github.rzo1.bloodfields.net.proto.ErrorEvent;
 import com.github.rzo1.bloodfields.net.proto.GameMessage;
+import com.github.rzo1.bloodfields.net.proto.Join;
+import com.github.rzo1.bloodfields.net.proto.Leaderboard;
+import com.github.rzo1.bloodfields.net.proto.MatchRecord;
 import com.github.rzo1.bloodfields.net.proto.Phase;
 import com.github.rzo1.bloodfields.net.proto.PlayerInfo;
 import com.github.rzo1.bloodfields.net.proto.PlayerMessage;
+import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
 import com.github.rzo1.bloodfields.net.proto.RestoredEvent;
 import com.github.rzo1.bloodfields.net.proto.ResultEvent;
 import com.github.rzo1.bloodfields.net.proto.SaveEvent;
+import com.github.rzo1.bloodfields.net.proto.SaveRecord;
 import com.github.rzo1.bloodfields.net.proto.Snapshot;
 import com.github.rzo1.bloodfields.net.proto.Welcome;
 import com.github.rzo1.bloodfields.telnet.BattleDriver;
@@ -21,8 +26,10 @@ import com.github.rzo1.bloodfields.ui.MapStructures;
 import com.github.rzo1.bloodfields.ui.Maps;
 import com.google.protobuf.InvalidProtocolBufferException;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
@@ -40,7 +47,9 @@ import io.grpc.stub.StreamObserver;
  * single-threaded executor so {@link StreamObserver#onNext} is never called
  * concurrently. The battle itself is driven by a {@link BattleDriver} on a
  * scheduled loop (~50 ms) with battle-state frames broadcast about four
- * times per second.
+ * times per second. When constructed with a data directory, saves are
+ * journaled as {@link SaveRecord}s in a {@link SaveStore} and every finished
+ * match is persisted to a {@link LeaderboardStore}; otherwise both are off.
  */
 public final class Match {
 
@@ -64,6 +73,12 @@ public final class Match {
     private long lastBroadcastNanos;
     private Faction endedWinner;
     private String resignedBy;
+    private String matchId;
+    private final List<PlayerMessage> journal = new ArrayList<>();
+    private Snapshot baseSnapshot;
+    private final Path dataDir;
+    private final SaveStore saveStore;
+    private final LeaderboardStore leaderboardStore;
 
     public Match() {
         this(DEFAULT_SERVER_NAME);
@@ -73,11 +88,37 @@ public final class Match {
         this(serverName, BATTLE_PERIOD_MS);
     }
 
+    public Match(String serverName, Path dataDir) {
+        this(serverName, BATTLE_PERIOD_MS, dataDir);
+    }
+
     Match(String serverName, long battlePeriodMs) {
+        this(serverName, battlePeriodMs, null);
+    }
+
+    Match(String serverName, long battlePeriodMs, Path dataDir) {
         this.serverName = serverName == null || serverName.isEmpty()
                 ? DEFAULT_SERVER_NAME : serverName;
         this.battlePeriodMs = Math.max(1, battlePeriodMs);
         this.scheduler = Executors.newSingleThreadScheduledExecutor(daemonFactory("bloodfield-match-battle"));
+        this.dataDir = dataDir;
+        this.saveStore = dataDir == null ? null : SaveStore.at(dataDir);
+        this.leaderboardStore = dataDir == null ? null : LeaderboardStore.at(dataDir);
+    }
+
+    /** The match's save store, or {@code null} when persistence is off. */
+    public SaveStore saveStore() {
+        return saveStore;
+    }
+
+    /** The match's leaderboard store, or {@code null} when persistence is off. */
+    public LeaderboardStore leaderboardStore() {
+        return leaderboardStore;
+    }
+
+    /** Current match id, or {@code null} before the first deploy. */
+    public String matchId() {
+        return matchId;
     }
 
     /** Binds a new client stream to this match. The returned observer must receive a Join first. */
@@ -135,27 +176,34 @@ public final class Match {
                 client.fail("JOIN FIRST");
                 return;
             }
-            join(client, msg.getJoin().getPlayerName());
+            join(client, msg.getJoin());
             return;
         }
         PlayerSlot slot = client.slot;
         switch (msg.getMsgCase()) {
             case CONFIGURE -> configure(slot, msg.getConfigure().getMapId(),
                     msg.getConfigure().getBudget(), msg.getConfigure().getDragons());
-            case PLACE -> place(slot, msg.getPlace().getType(),
-                    msg.getPlace().getX(), msg.getPlace().getY());
-            case REMOVE -> remove(slot, msg.getRemove().getX(), msg.getRemove().getY());
-            case SELECT_SKILL -> selectSkill(slot, msg.getSelectSkill().getSkill());
+            case PLACE -> place(slot, msg);
+            case REMOVE -> remove(slot, msg);
+            case SELECT_SKILL -> selectSkill(slot, msg);
             case SET_READY -> setReady(slot, msg.getSetReady().getReady());
-            case BATTLE -> battleControl(slot, msg.getBattle());
+            case BATTLE -> battleControl(slot, msg);
             case SAVE -> save(slot, msg.getSave().getLabel());
             case RESTORE -> restore(slot, msg.getRestore().getSnapshot().toByteArray());
+            case FETCH_SAVE -> fetchSave(slot, msg.getFetchSave().getSaveId());
+            case LEADERBOARD -> {
+                slot.client.send(GameMessage.newBuilder()
+                        .setBoard(leaderboardStore != null
+                                ? leaderboardStore.aggregate()
+                                : Leaderboard.getDefaultInstance())
+                        .build());
+            }
             case JOIN -> sendError(slot, "ALREADY JOINED");
             default -> sendError(slot, "EMPTY MESSAGE");
         }
     }
 
-    private void join(Client client, String name) {
+    private void join(Client client, Join joinMsg) {
         PlayerSlot free = null;
         for (PlayerSlot s : slots) {
             if (!s.occupied) {
@@ -170,15 +218,27 @@ public final class Match {
         free.occupied = true;
         free.connected = true;
         free.ready = false;
-        free.name = name == null ? "" : name;
+        PlayerProfile profile = joinMsg.getProfile();
+        String name = joinMsg.getPlayerName();
+        free.name = profile.getName().isBlank() && name != null ? name : profile.getName();
+        if (free.name == null) free.name = "";
+        free.playerId = profile.getPlayerId();
+        free.advertisedSaves = joinMsg.getSavesCount();
         free.client = client;
         client.slot = free;
-        client.send(GameMessage.newBuilder()
-                .setWelcome(Welcome.newBuilder()
-                        .setYourFaction(ProtoMapper.factionKind(free.faction))
-                        .setPhase(phase)
-                        .setServerName(serverName))
-                .build());
+        Welcome.Builder welcome = Welcome.newBuilder()
+                .setYourFaction(ProtoMapper.factionKind(free.faction))
+                .setPhase(phase)
+                .setServerName(serverName)
+                .setMatchId(matchId == null ? "" : matchId);
+        if (saveStore != null) {
+            try {
+                welcome.addAllSaves(saveStore.list());
+            } catch (RuntimeException ignored) {
+                // a broken store must not block the handshake
+            }
+        }
+        client.send(GameMessage.newBuilder().setWelcome(welcome).build());
         if (phase == Phase.LOBBY) {
             broadcastLobby();
         } else if (phase == Phase.ENDED) {
@@ -209,13 +269,12 @@ public final class Match {
         broadcastLobby();
     }
 
-    private void place(PlayerSlot slot, com.github.rzo1.bloodfields.net.proto.UnitKind kind,
-                       double x, double y) {
+    private void place(PlayerSlot slot, PlayerMessage msg) {
         if (phase != Phase.DEPLOY || game == null) {
             sendError(slot, "NOT IN DEPLOY");
             return;
         }
-        UnitType type = ProtoMapper.unitType(kind);
+        UnitType type = ProtoMapper.unitType(msg.getPlace().getType());
         if (type == null) {
             sendError(slot, "UNKNOWN UNIT TYPE");
             return;
@@ -224,31 +283,35 @@ public final class Match {
             sendError(slot, "DRAGONS NOT ENABLED");
             return;
         }
-        HeadlessGame.PlaceResult result = game.place(slot.faction, type, x, y);
+        HeadlessGame.PlaceResult result = game.place(slot.faction, type,
+                msg.getPlace().getX(), msg.getPlace().getY());
         if (!result.success) {
             sendError(slot, result.reason == null ? "CANNOT PLACE" : result.reason);
             return;
         }
+        journal.add(msg);
         broadcastDeploy();
     }
 
-    private void remove(PlayerSlot slot, double x, double y) {
+    private void remove(PlayerSlot slot, PlayerMessage msg) {
         if (phase != Phase.DEPLOY || game == null) {
             sendError(slot, "NOT IN DEPLOY");
             return;
         }
-        if (game.remove(slot.faction, x, y)) {
+        if (game.remove(slot.faction, msg.getRemove().getX(), msg.getRemove().getY())) {
+            journal.add(msg);
             broadcastDeploy();
         }
     }
 
-    private void selectSkill(PlayerSlot slot,
-                             com.github.rzo1.bloodfields.net.proto.Skill skill) {
+    private void selectSkill(PlayerSlot slot, PlayerMessage msg) {
         if (phase != Phase.DEPLOY || game == null) {
             sendError(slot, "NOT IN DEPLOY");
             return;
         }
-        game.state().armyOf(slot.faction).setHeroSkill(ProtoMapper.skill(skill));
+        game.state().armyOf(slot.faction)
+                .setHeroSkill(ProtoMapper.skill(msg.getSelectSkill().getSkill()));
+        journal.add(msg);
         broadcastDeploy();
     }
 
@@ -285,7 +348,8 @@ public final class Match {
         }
     }
 
-    private void battleControl(PlayerSlot slot, BattleControl control) {
+    private void battleControl(PlayerSlot slot, PlayerMessage msg) {
+        BattleControl control = msg.getBattle();
         if (phase != Phase.BATTLE || driver == null) {
             sendError(slot, "NOT IN BATTLE");
             return;
@@ -298,17 +362,21 @@ public final class Match {
                     return;
                 }
                 driver.setSpeedIndex(v);
+                journal.add(msg);
                 broadcastBattle();
             }
             case PAUSE -> {
                 if (!driver.paused()) driver.togglePause();
+                journal.add(msg);
                 broadcastBattle();
             }
             case RESUME -> {
                 if (driver.paused()) driver.togglePause();
+                journal.add(msg);
                 broadcastBattle();
             }
             case RESIGN -> {
+                journal.add(msg);
                 resignedBy = slot.name;
                 endBattle(slot.faction == Faction.RED
                         ? BattleDriver.End.BLUE_WINS : BattleDriver.End.RED_WINS);
@@ -322,32 +390,52 @@ public final class Match {
             sendError(slot, "CANNOT SAVE IN LOBBY");
             return;
         }
-        Snapshot snap = SnapshotCodec.capture(game, config, phase, playerNames());
+        Snapshot head = SnapshotCodec.capture(game, config, phase, playerNames());
+        SaveRecord rec = SaveCodec.fromSnapshots(UUID.randomUUID().toString(),
+                label == null ? "" : label, slot.name, baseSnapshot,
+                List.copyOf(journal), head);
+        byte[] bytes = SaveCodec.encode(rec);
+        if (saveStore != null) {
+            try {
+                saveStore.put(bytes);
+            } catch (RuntimeException ex) {
+                // persistence is best-effort; the broadcast still goes out
+            }
+        }
         broadcast(GameMessage.newBuilder()
                 .setSaved(SaveEvent.newBuilder()
-                        .setSnapshot(com.google.protobuf.ByteString.copyFrom(snap.toByteArray()))
+                        .setSnapshot(com.google.protobuf.ByteString.copyFrom(bytes))
                         .setSavedBy(slot.name)
-                        .setLabel(label == null ? "" : label)
+                        .setLabel(rec.getLabel())
                         .setPhase(phase)
-                        .setSimTime(game.simTime()))
+                        .setSimTime(game.simTime())
+                        .setSaveId(rec.getSaveId()))
                 .build());
+        // each save compacts the queue: head becomes the new base
+        baseSnapshot = head;
+        journal.clear();
     }
 
     private void restore(PlayerSlot slot, byte[] bytes) {
-        if (phase == Phase.LOBBY) {
-            sendError(slot, "CANNOT RESTORE IN LOBBY");
-            return;
-        }
         Snapshot snap;
-        try {
-            snap = Snapshot.parseFrom(bytes);
-        } catch (InvalidProtocolBufferException ex) {
-            sendError(slot, "INVALID SNAPSHOT");
-            return;
-        }
-        if (snap.getVersion() != SnapshotCodec.VERSION) {
-            sendError(slot, "UNSUPPORTED SNAPSHOT VERSION " + snap.getVersion());
-            return;
+        if (SaveCodec.isSaveRecord(bytes)) {
+            try {
+                snap = SaveCodec.headSnapshotOf(bytes);
+            } catch (RuntimeException ex) {
+                sendError(slot, "INVALID SAVE: " + ex.getMessage());
+                return;
+            }
+        } else {
+            try {
+                snap = Snapshot.parseFrom(bytes);
+            } catch (InvalidProtocolBufferException ex) {
+                sendError(slot, "INVALID SNAPSHOT");
+                return;
+            }
+            if (snap.getVersion() != SnapshotCodec.VERSION) {
+                sendError(slot, "UNSUPPORTED SNAPSHOT VERSION " + snap.getVersion());
+                return;
+            }
         }
         HeadlessGame restored;
         try {
@@ -365,6 +453,9 @@ public final class Match {
         config.setDragons(snap.getDragons());
         phase = snap.getPhase();
         endedWinner = ProtoMapper.faction(snap.getWinner());
+        // a restore is a fresh checkpoint for future saves
+        baseSnapshot = snap;
+        journal.clear();
         resetReady();
         broadcast(GameMessage.newBuilder()
                 .setRestored(RestoredEvent.newBuilder()
@@ -386,12 +477,44 @@ public final class Match {
         }
     }
 
+    private void fetchSave(PlayerSlot slot, String saveId) {
+        if (saveStore == null) {
+            sendError(slot, "NO SAVE STORE");
+            return;
+        }
+        byte[] bytes = saveStore.get(saveId);
+        if (bytes == null) {
+            sendError(slot, "UNKNOWN SAVE: " + saveId);
+            return;
+        }
+        SaveRecord rec;
+        try {
+            rec = SaveCodec.decode(bytes);
+        } catch (RuntimeException ex) {
+            sendError(slot, "CORRUPT SAVE");
+            return;
+        }
+        Snapshot head = rec.getHead();
+        broadcast(GameMessage.newBuilder()
+                .setSaved(SaveEvent.newBuilder()
+                        .setSnapshot(com.google.protobuf.ByteString.copyFrom(bytes))
+                        .setSavedBy(rec.getSavedBy())
+                        .setLabel(rec.getLabel())
+                        .setPhase(head.getPhase())
+                        .setSimTime(head.getSimTime())
+                        .setSaveId(rec.getSaveId()))
+                .build());
+    }
+
     // ----- phase transitions (must hold lock) -----
 
     private void startDeploy() {
         game = newGame();
         phase = Phase.DEPLOY;
         endedWinner = null;
+        matchId = UUID.randomUUID().toString();
+        baseSnapshot = SnapshotCodec.capture(game, config, Phase.DEPLOY, playerNames());
+        journal.clear();
         resetReady();
         broadcastDeploy();
     }
@@ -419,6 +542,28 @@ public final class Match {
         resetReady();
         broadcastBattle();
         broadcastResult(resignedBy);
+        MatchRecord record = MatchRecord.newBuilder()
+                .setMatchId(matchId == null ? "" : matchId)
+                .setEndedEpochMs(System.currentTimeMillis())
+                .setRed(profileOf(slots[0]))
+                .setBlue(profileOf(slots[1]))
+                .setWinnerId(winnerPlayerId())
+                .setDraw(endedWinner == null)
+                .setResigned(resignedBy != null)
+                .setTicks(game.state().tick)
+                .setSimTime(game.simTime())
+                .setRedLeft(game.aliveCount(Faction.RED))
+                .setBlueLeft(game.aliveCount(Faction.BLUE))
+                .setMapId(config.mapId())
+                .build();
+        broadcast(GameMessage.newBuilder().setRecord(record).build());
+        if (leaderboardStore != null) {
+            try {
+                leaderboardStore.add(record);
+            } catch (RuntimeException ex) {
+                // leaderboard persistence is best-effort
+            }
+        }
         resignedBy = null;
         for (PlayerSlot slot : slots) {
             if (!slot.connected) freeSlot(slot);
@@ -429,8 +574,28 @@ public final class Match {
         game = newGame();
         phase = Phase.DEPLOY;
         endedWinner = null;
+        matchId = UUID.randomUUID().toString();
+        baseSnapshot = SnapshotCodec.capture(game, config, Phase.DEPLOY, playerNames());
+        journal.clear();
         resetReady();
         broadcastDeploy();
+    }
+
+    private PlayerProfile profileOf(PlayerSlot slot) {
+        return PlayerProfile.newBuilder()
+                .setPlayerId(slot.playerId == null ? "" : slot.playerId)
+                .setName(slot.name == null ? "" : slot.name)
+                .build();
+    }
+
+    private String winnerPlayerId() {
+        if (endedWinner == null) return "";
+        for (PlayerSlot slot : slots) {
+            if (slot.faction == endedWinner) {
+                return slot.playerId == null ? "" : slot.playerId;
+            }
+        }
+        return "";
     }
 
     private HeadlessGame newGame() {
@@ -483,6 +648,8 @@ public final class Match {
                     .setName(slot.name == null ? "" : slot.name)
                     .setConnected(slot.connected)
                     .setReady(slot.ready)
+                    .setPlayerId(slot.playerId == null ? "" : slot.playerId)
+                    .setSaveCount(slot.advertisedSaves)
                     .build());
         }
         broadcast(GameMessage.newBuilder()
@@ -545,6 +712,8 @@ public final class Match {
         slot.connected = false;
         slot.ready = false;
         slot.name = "";
+        slot.playerId = "";
+        slot.advertisedSaves = 0;
         if (phase == Phase.LOBBY) {
             slot.occupied = false;
             broadcastLobby();
@@ -599,6 +768,8 @@ public final class Match {
         boolean connected;
         boolean ready;
         String name = "";
+        String playerId = "";
+        int advertisedSaves;
         Client client;
 
         PlayerSlot(Faction faction) {

@@ -295,7 +295,7 @@ class MatchServiceFlowTest {
     }
 
     @Test
-    void saveAndRestoreRejectedInLobby() {
+    void saveRejectedInLobbyAndRestoreValidatesPayload() {
         GameClient red = client("ann");
         GameClient blue = client("bob");
         await(red, GameMessage::hasWelcome);
@@ -306,11 +306,12 @@ class MatchServiceFlowTest {
         GameMessage saveDenied = await(red, GameMessage::hasError);
         assertEquals("CANNOT SAVE IN LOBBY", saveDenied.getError().getReason());
 
+        // Restore is allowed in LOBBY now; a garbage payload is still rejected.
         red.send(PlayerMessage.newBuilder()
                 .setRestore(RestoreGame.newBuilder()
                         .setSnapshot(ByteString.copyFrom(new byte[]{1}))));
         GameMessage restoreDenied = await(red, GameMessage::hasError);
-        assertEquals("CANNOT RESTORE IN LOBBY", restoreDenied.getError().getReason());
+        assertEquals("INVALID SNAPSHOT", restoreDenied.getError().getReason());
     }
 
     @Test

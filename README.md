@@ -163,6 +163,35 @@ java -cp ... CliMain telnet --port=6400 --proxy=hostA:6411
 
 Code lives in `com.github.rzo1.bloodfields.net`.
 
+### Profiles, saved games, and mesh leaderboards
+
+Every node keeps a small data directory (default `~/.bloodfield`, override
+with `--data-dir=DIR`): a persistent **player profile** (`profile`), durable
+**save states** (`saves`), and every **match record** it has seen
+(`records.json`).
+
+A save state is a *base snapshot plus the queue of actions applied since*,
+with the current head snapshot for instant restore — gzip-compressed on the
+wire and on disk (a mid-battle save is a few hundred bytes). Each save
+compacts the action queue. Both players' clients persist every save and every
+match record automatically; the handshake (`Join`/`Welcome`) advertises the
+saves each side holds, so a peer can pull one (`F` on the C64 proxy) and
+restore straight into it — even from the lobby.
+
+Finished matches broadcast a signed-off `MatchRecord` to both players. Servers
+gossip records over a second streaming RPC, `BloodfieldMesh.Sync`: two nodes
+exchange record sets and merge by match id, so re-syncing is idempotent and
+**leaderboards that join the same mesh simply aggregate their totals**:
+
+```bash
+java -cp ... CliMain profile --name=RICK          # set your display name
+java -cp ... CliMain saves                        # list local save states
+java -cp ... CliMain mesh --peer=hostB:6411       # sync records, print the board
+```
+
+The C64 proxy joins with its profile name and shows the mesh leaderboard in
+PETSCII with `L`.
+
 ## Native installer
 
 Bloodfield can be packaged as a native installer that bundles its own JRE, so

@@ -75,11 +75,15 @@ message PlayerMessage {
     BattleControl battle = 7;    // battle phase
     SaveGame save = 8;           // any phase except lobby
     RestoreGame restore = 9;     // pushes a snapshot received earlier
+    FetchSave fetch_save = 10;   // ask the server to broadcast one of its stored saves
+    RequestLeaderboard leaderboard = 11;  // ask for the server's aggregated leaderboard
   }
 }
 
 message Join {
   string player_name = 1;        // display only; may be empty
+  PlayerProfile profile = 2;     // stable identity from the player's local store
+  repeated SaveMeta saves = 3;   // saves advertised at handshake
 }
 
 message Configure {
@@ -139,6 +143,8 @@ message GameMessage {
     SaveEvent saved = 6;           // snapshot bytes, sent to BOTH players
     RestoredEvent restored = 7;    // a snapshot was applied
     ErrorEvent error = 8;          // rejected action (stream stays open)
+    MatchRecord record = 9;        // final record of the match, sent once at ENDED
+    Leaderboard board = 10;        // response to RequestLeaderboard
   }
 }
 
@@ -146,6 +152,8 @@ message Welcome {
   Faction your_faction = 1;
   Phase phase = 2;               // phase the match is currently in
   string server_name = 3;
+  repeated SaveMeta saves = 4;   // server's stored saves, for the client's restore list
+  string match_id = 5;           // server-assigned id, echoed in the MatchRecord
 }
 
 message PlayerInfo {
@@ -153,6 +161,8 @@ message PlayerInfo {
   string name = 2;
   bool connected = 3;
   bool ready = 4;
+  string player_id = 5;          // stable id from the player's profile, if shared
+  int32 save_count = 6;          // number of saves this player advertised
 }
 
 message StructureInfo {
@@ -258,11 +268,15 @@ message ResultEvent {
 }
 
 message SaveEvent {
-  bytes snapshot = 1;            // serialized Snapshot; persist anywhere
+  // Gzip-compressed SaveRecord (see SaveRecord/SaveCodec); the head snapshot
+  // inside is used for instant restore. Legacy raw serialized Snapshot bytes
+  // are still accepted on restore.
+  bytes snapshot = 1;
   string saved_by = 2;
   string label = 3;
   Phase phase = 4;
   double sim_time = 5;
+  string save_id = 6;
 }
 
 message RestoredEvent {
@@ -357,4 +371,95 @@ message StructureState {
   bool destroyed = 7;
   bool open = 8;
   double hp = 9;
+}
+
+// ---------------------------------------------------------------- profiles & saves
+
+message PlayerProfile {
+  string player_id = 1;   // stable random id from the player's local profile store
+  string name = 2;        // display name
+}
+
+message SaveMeta {
+  string save_id = 1;
+  string label = 2;
+  int64 created_epoch_ms = 3;
+  string saved_by = 4;
+  string map_id = 5;
+  int32 budget = 6;
+  Phase phase = 7;
+  int64 tick = 8;
+  int32 size_bytes = 9;   // compressed size on disk
+}
+
+// A save state is a base snapshot plus the queue of player actions applied
+// since, with the current head snapshot for instant restore. Persisted and
+// transferred gzip-compressed.
+message SaveRecord {
+  int32 version = 1;                  // record format version, currently 1
+  string save_id = 2;
+  int64 created_epoch_ms = 3;
+  string label = 4;
+  string saved_by = 5;
+  Snapshot base = 6;                  // checkpoint the action queue builds on
+  repeated PlayerMessage actions = 7; // journaled actions since base
+  Snapshot head = 8;                  // current state; restore uses this
+}
+
+message FetchSave {
+  string save_id = 1;
+}
+
+message RequestLeaderboard {
+}
+
+// ---------------------------------------------------------------- match records
+
+message MatchRecord {
+  string match_id = 1;
+  int64 ended_epoch_ms = 2;
+  PlayerProfile red = 3;
+  PlayerProfile blue = 4;
+  string winner_id = 5;    // player_id, empty on draw
+  bool draw = 6;
+  bool resigned = 7;
+  int64 ticks = 8;
+  double sim_time = 9;
+  int32 red_left = 10;
+  int32 blue_left = 11;
+  string map_id = 12;
+}
+
+message LeaderboardEntry {
+  string player_id = 1;
+  string name = 2;         // most recent display name seen for this id
+  int32 games = 3;
+  int32 wins = 4;
+  int32 losses = 5;
+  int32 draws = 6;
+}
+
+message Leaderboard {
+  repeated LeaderboardEntry entries = 1;  // sorted: wins desc, then games desc, then name
+  int32 total_records = 2;                // records aggregated over
+}
+
+// Mesh gossip: two servers exchange match records and aggregate leaderboards
+// over the union. Merging is by match_id, so re-syncing is idempotent and two
+// leaderboards joining the same mesh simply aggregate their totals.
+service BloodfieldMesh {
+  rpc Sync(stream MeshMessage) returns (stream MeshMessage);
+}
+
+message MeshMessage {
+  oneof msg {
+    MeshHello hello = 1;      // first message both ways: profile + known record ids
+    MatchRecord record = 2;   // a record the peer announced it is missing
+    Leaderboard board = 3;    // final message: aggregate over the merged store
+  }
+}
+
+message MeshHello {
+  PlayerProfile profile = 1;
+  repeated string record_ids = 2;
 }
