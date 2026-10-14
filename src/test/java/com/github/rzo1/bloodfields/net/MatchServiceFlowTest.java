@@ -233,7 +233,7 @@ class MatchServiceFlowTest {
         GameClient[] both = intoBattle();
         battle(both[1], BattleControl.Command.RESIGN);
         GameMessage result = await(both[0], GameMessage::hasResult);
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.RED, result.getResult().getWinner());
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, result.getResult().getWinner());
 
         both[0].send(PlayerMessage.newBuilder()
                 .setSave(SaveGame.newBuilder().setLabel("aftermath")));
@@ -243,7 +243,7 @@ class MatchServiceFlowTest {
         assertEquals("ann", savedRed.getSaved().getSavedBy());
         GameMessage savedBlue = await(both[1], GameMessage::hasSaved);
         assertEquals(Phase.ENDED, savedBlue.getSaved().getPhase());
-        assertFalse(savedBlue.getSaved().getSnapshot().isEmpty());
+        assertFalse(savedBlue.getSaved().getSaveRecord().isEmpty());
     }
 
     @Test
@@ -256,7 +256,10 @@ class MatchServiceFlowTest {
 
         both[1].send(PlayerMessage.newBuilder()
                 .setRestore(RestoreGame.newBuilder()
-                        .setSnapshot(saved.getSaved().getSnapshot())));
+                        .setSnapshot(saved.getSaved().getSaveRecord())));
+        await(both[0], GameMessage::hasRestoreProposed);
+        both[0].send(PlayerMessage.newBuilder().setConsentRestore(
+                com.github.rzo1.bloodfields.net.proto.ConsentRestore.newBuilder().setAccept(true)));
         GameMessage restoredRed = await(both[0], GameMessage::hasRestored);
         assertEquals("bob", restoredRed.getRestored().getRestoredBy());
         assertEquals(Phase.BATTLE, restoredRed.getRestored().getPhase());
@@ -374,7 +377,7 @@ class MatchServiceFlowTest {
         GameClient[] both = intoBattle();
         battle(both[0], BattleControl.Command.RESIGN); // RED resigns -> BLUE wins
         GameMessage result = await(both[1], GameMessage::hasResult);
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.BLUE,
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE,
                 result.getResult().getWinner());
 
         both[0].close(); // ENDED disconnect frees the RED seat
@@ -384,7 +387,7 @@ class MatchServiceFlowTest {
         assertEquals(Faction.RED, carl.faction());
 
         GameMessage resync = await(carl, GameMessage::hasResult);
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.BLUE,
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE,
                 resync.getResult().getWinner());
         assertFalse(resync.getResult().getDraw());
     }
@@ -407,7 +410,7 @@ class MatchServiceFlowTest {
         GameClient[] both = intoBattle();
         battle(both[1], BattleControl.Command.RESIGN); // bob resigns
         GameMessage result = await(both[0], GameMessage::hasResult);
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.RED, result.getResult().getWinner());
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, result.getResult().getWinner());
         assertFalse(result.getResult().getDraw());
         assertEquals("bob", result.getResult().getResignedBy());
         assertEquals(1, result.getResult().getRedLeft());

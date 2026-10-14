@@ -124,12 +124,25 @@ public final class SpatialHashGrid {
     public double width() { return width; }
     public double height() { return height; }
 
+    // Cell coordinates are clamped to a margin around the world. Without
+    // this, a unit restored at x=1e300 makes cellX Integer.MAX_VALUE and
+    // the withinRadius/ring loops never terminate (cx <= MAX_VALUE is
+    // always true) — one forged coordinate froze a whole match thread.
     private int cellX(double x) {
-        return (int) Math.floor(x / cellSize);
+        return clampCell(x, width);
     }
 
     private int cellY(double y) {
-        return (int) Math.floor(y / cellSize);
+        return clampCell(y, height);
+    }
+
+    private int clampCell(double v, double extent) {
+        if (!Double.isFinite(v)) return 0;
+        double max = Math.ceil(extent / cellSize) + 2;
+        double c = Math.floor(v / cellSize);
+        if (c < -2) return -2;
+        if (c > max) return (int) max;
+        return (int) c;
     }
 
     private static long key(int cx, int cy) {

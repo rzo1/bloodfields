@@ -12,10 +12,17 @@ import java.util.Arrays;
  * which keeps a 9600-baud C64 link usable: a full repaint is ~1.4 KB, a
  * typical battle-frame diff is a few hundred bytes.
  *
- * Row addressing uses HOME + CURSOR-DOWN x N so a stray deferred line wrap
- * from a previous 40th-column write can never shift the target row. The
- * bottom-right cell (24,39) is never written: printing there would scroll
- * the screen on a real C64.
+ * Row addressing uses HOME + CURSOR-DOWN x N for every row segment. On a
+ * C64 printing in column 39 wraps immediately (and may link the logical
+ * line to the next), so absolute re-addressing per row makes that wrap
+ * harmless everywhere except the bottom-right cell (24,39), where a wrap
+ * would scroll the whole screen. That one cell is therefore never written;
+ * column 39 of every other row is safe precisely because the next segment
+ * re-homes the cursor instead of trusting where the wrap left it.
+ *
+ * <p>Output bytes of {@code 0xFF} are escaped as {@code IAC IAC} per RFC 854.
+ * No glyph or color used today is {@code 0xFF}, but the guard keeps the
+ * stream valid if one ever is.
  */
 public final class PetsciiScreen {
 
@@ -29,6 +36,9 @@ public final class PetsciiScreen {
     private final byte[] prevColor = new byte[COLS * ROWS];
     private final boolean[] prevRvs = new boolean[COLS * ROWS];
     private boolean shadowValid = false;
+    /** Reused across frames: no per-frame allocation or copy on the hot path. */
+    private final ByteArrayOutputStream frame = new ByteArrayOutputStream(2048);
+    private boolean frameHasFF;
 
     public PetsciiScreen() {
         clear((byte) ' ', Petscii.WHITE);
@@ -45,6 +55,7 @@ public final class PetsciiScreen {
         shadowValid = false;
     }
 
+    /** Sets one cell without reverse video. Out-of-range cells are ignored. */
     public void set(int c, int r, byte g, byte col) {
         set(c, r, g, col, false);
     }
@@ -58,6 +69,7 @@ public final class PetsciiScreen {
         rvs[i] = rev;
     }
 
+    /** Writes PETSCII-encoded text starting at ({@code c},{@code r}); clipped at the right edge. */
     public void text(int c, int r, String s, byte col) {
         text(c, r, s, col, false);
     }
@@ -88,8 +100,17 @@ public final class PetsciiScreen {
         return rvs[r * COLS + c];
     }
 
+    /**
+     * Writes the diff against the previously presented frame to {@code out}
+     * (a full repaint after construction or {@link #invalidate()}). The
+     * caller owns flushing and any write deadline.
+     *
+     * @param out destination stream (typically the session's bounded writer)
+     */
     public void present(OutputStream out) throws IOException {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream(2048);
+        ByteArrayOutputStream buf = frame;
+        buf.reset();
+        frameHasFF = false;
         for (int r = 0; r < ROWS; r++) {
             int base = r * COLS;
             int c0 = -1;
@@ -119,6 +140,7 @@ public final class PetsciiScreen {
                         lastRvs = rvs[i];
                     }
                     buf.write(glyph[i]);
+                    if (glyph[i] == (byte) 0xFF || color[i] == (byte) 0xFF) frameHasFF = true;
                     first = false;
                 } else {
                     buf.write(Petscii.CURSOR_RIGHT);
@@ -129,7 +151,25 @@ public final class PetsciiScreen {
         System.arraycopy(color, 0, prevColor, 0, color.length);
         System.arraycopy(rvs, 0, prevRvs, 0, rvs.length);
         shadowValid = true;
-        out.write(buf.toByteArray());
+        writeEscaped(buf, out);
+    }
+
+    /** Streams the frame out (no copy on the fast path), doubling any 0xFF as IAC IAC. */
+    private void writeEscaped(ByteArrayOutputStream buf, OutputStream out) throws IOException {
+        if (!frameHasFF) {
+            buf.writeTo(out);
+            return;
+        }
+        byte[] raw = buf.toByteArray();
+        int start = 0;
+        for (int i = 0; i < raw.length; i++) {
+            if (raw[i] == (byte) 0xFF) {
+                out.write(raw, start, i - start);
+                out.write(0xFF);
+                start = i; // the original 0xFF is written by the next chunk
+            }
+        }
+        out.write(raw, start, raw.length - start);
     }
 
     private boolean dirty(int i) {

@@ -1,7 +1,7 @@
 package com.github.rzo1.bloodfields.engine;
 
 import com.github.rzo1.bloodfields.ai.UnitAI;
-import com.github.rzo1.bloodfields.cli.Json;
+import com.github.rzo1.bloodfields.util.Json;
 import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.HeroSkill;

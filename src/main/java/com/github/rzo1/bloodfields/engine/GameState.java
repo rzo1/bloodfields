@@ -83,13 +83,18 @@ public final class GameState {
      * interleaving in tick order, which is what makes replays reproducible
      * even if one subsystem stops querying its RNG.
      */
-    public Random rng(String purpose) {
+    /** The raw seed {@link #rng(String)} derives for a purpose (for stateful RNG wrappers). */
+    public long rngSeedFor(String purpose) {
         long h = (purpose == null) ? 0L : (long) purpose.hashCode();
         // SplitMix64-style mixer; cheap and avalanches well for our 64-bit seed.
         long z = rngSeed ^ (h * 0x9E3779B97F4A7C15L);
         z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
         z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
         z = z ^ (z >>> 31);
-        return new Random(z);
+        return z;
+    }
+
+    public Random rng(String purpose) {
+        return new Random(rngSeedFor(purpose));
     }
 }

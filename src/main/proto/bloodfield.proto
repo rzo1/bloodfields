@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package bloodfields;
+package bloodfields.v1;
 
 option java_multiple_files = true;
 option java_package = "com.github.rzo1.bloodfields.net.proto";
@@ -18,8 +18,9 @@ service Bloodfield {
 
 enum Faction {
   FACTION_UNSPECIFIED = 0;
-  RED = 1;
-  BLUE = 2;
+  FACTION_RED = 1;
+  FACTION_BLUE = 2;
+  reserved 3 to 10;
 }
 
 enum Phase {
@@ -28,6 +29,7 @@ enum Phase {
   DEPLOY = 2;   // both players place their armies
   BATTLE = 3;   // simulation running (server-driven)
   ENDED = 4;    // result known; restore or rematch from here
+  reserved 5 to 10;
 }
 
 enum UnitKind {
@@ -74,16 +76,25 @@ message PlayerMessage {
     SetReady set_ready = 6;      // lobby + deploy + ended (rematch)
     BattleControl battle = 7;    // battle phase
     SaveGame save = 8;           // any phase except lobby
-    RestoreGame restore = 9;     // pushes a snapshot received earlier
-    FetchSave fetch_save = 10;   // ask the server to broadcast one of its stored saves
-    RequestLeaderboard leaderboard = 11;  // ask for the server's aggregated leaderboard
+    RestoreGame restore = 9;     // proposes restoring a snapshot (parley)
+    ConsentRestore consent_restore = 10;  // answer to a RestoreProposedEvent
+    FetchSave fetch_save = 11;   // ask the server to broadcast one of its stored saves
+    RequestLeaderboard leaderboard = 12;  // ask for the server's aggregated leaderboard
   }
+  reserved 13 to 20;
 }
 
 message Join {
   string player_name = 1;        // display only; may be empty
-  PlayerProfile profile = 2;     // stable identity from the player's local store
-  repeated SaveMeta saves = 3;   // saves advertised at handshake
+  // Reconnect token from a previous Welcome: reclaims a disconnected
+  // seat (any phase) instead of being turned away or stealing a seat.
+  string reconnect_token = 2;
+  // Join the gallery instead of a seat: spectators receive every frame
+  // and event but their commands are rejected.
+  bool spectate = 3;
+  PlayerProfile profile = 4;     // stable identity from the player's local store
+  repeated SaveMeta saves = 5;   // count advertised at handshake (server uses the count)
+  reserved 6 to 10;
 }
 
 message Configure {
@@ -128,7 +139,13 @@ message SaveGame {
 }
 
 message RestoreGame {
-  bytes snapshot = 1;            // a Snapshot message previously received
+  bytes snapshot = 1;            // a sealed Snapshot received on SaveEvent
+}
+
+// Restore is a parley: one side proposes, the other consents (or not).
+// Unilateral rewinds of a losing battle are not a thing.
+message ConsentRestore {
+  bool accept = 1;
 }
 
 // ---------------------------------------------------------------- server ->
@@ -143,17 +160,24 @@ message GameMessage {
     SaveEvent saved = 6;           // snapshot bytes, sent to BOTH players
     RestoredEvent restored = 7;    // a snapshot was applied
     ErrorEvent error = 8;          // rejected action (stream stays open)
-    MatchRecord record = 9;        // final record of the match, sent once at ENDED
-    Leaderboard board = 10;        // response to RequestLeaderboard
+    RestoreProposedEvent restore_proposed = 9;  // opponent asks to restore
+    NoticeEvent notice = 10;       // herald's cry: notable battle events
+    MatchRecord record = 11;       // final record of the match, sent once at ENDED
+    Leaderboard board = 12;        // response to RequestLeaderboard
   }
+  reserved 13 to 20;
 }
 
 message Welcome {
-  Faction your_faction = 1;
+  Faction your_faction = 1;      // FACTION_UNSPECIFIED for spectators
   Phase phase = 2;               // phase the match is currently in
   string server_name = 3;
-  repeated SaveMeta saves = 4;   // server's stored saves, for the client's restore list
-  string match_id = 5;           // server-assigned id, echoed in the MatchRecord
+  // Present this token on a later Join to reclaim this seat after a drop.
+  string reconnect_token = 4;
+  bool spectator = 5;
+  repeated SaveMeta saves = 6;   // server's stored saves (newest first, capped)
+  string match_id = 7;           // server-assigned id, echoed in the MatchRecord
+  reserved 8 to 10;
 }
 
 message PlayerInfo {
@@ -268,15 +292,16 @@ message ResultEvent {
 }
 
 message SaveEvent {
-  // Gzip-compressed SaveRecord (see SaveRecord/SaveCodec); the head snapshot
-  // inside is used for instant restore. Legacy raw serialized Snapshot bytes
-  // are still accepted on restore.
-  bytes snapshot = 1;
+  // Serialized raw Snapshot. DEPRECATED since saves became records: new
+  // servers leave this empty and use save_record; the field number and
+  // meaning are kept frozen so mixed versions fail loudly, not silently.
+  bytes snapshot = 1 [deprecated = true];
   string saved_by = 2;
   string label = 3;
   Phase phase = 4;
   double sim_time = 5;
   string save_id = 6;
+  bytes save_record = 7;         // gzip-compressed, sealed SaveRecord (SaveCodec)
 }
 
 message RestoredEvent {
@@ -289,13 +314,24 @@ message ErrorEvent {
   string reason = 1;
 }
 
+message RestoreProposedEvent {
+  string proposed_by = 1;
+  Phase phase = 2;               // phase the snapshot would restore to
+  double sim_time = 3;
+}
+
+// Short human-readable battle news ("A DRAGON HAS FALLEN"), for HUDs.
+message NoticeEvent {
+  string text = 1;
+}
+
 // ---------------------------------------------------------------- snapshot
 
 // Full match state. Bytes are produced by the server on SaveGame and
 // accepted back via RestoreGame. Opaque to clients: persist or transfer
 // as-is. Versioned so future format changes can be rejected cleanly.
 message Snapshot {
-  int32 version = 1;             // currently 1
+  int32 version = 1;             // currently 2
   string map_id = 2;
   int32 budget = 3;
   bool dragons = 4;
@@ -314,6 +350,23 @@ message Snapshot {
   repeated Tile scorched = 17;
   repeated StructureState structures = 18;
   repeated string player_names = 19;  // informational
+  // HMAC-SHA256 over this message with this field cleared, keyed by the
+  // issuing server. Restores of forged or foreign scrolls are rejected.
+  bytes seal = 20;
+  repeated FactionStats stats = 21;
+  int64 poke_rng_draws = 22;     // ai.poke RNG steps taken (continuity)
+  reserved 23 to 30;
+}
+
+message FactionStats {
+  Faction faction = 1;
+  int32 kills = 2;
+  int32 deaths = 3;
+  double damage_dealt = 4;
+  double damage_received = 5;
+  double biggest_hit = 6;
+  int64 last_fall_tick = 7;
+  repeated int64 credited_kill_ids = 8;
 }
 
 message ArmyState {
@@ -321,6 +374,7 @@ message ArmyState {
   int32 reserve = 2;
   Skill hero_skill = 3;
   double hp_multiplier = 4;
+  map<int32, int32> caps = 5;    // UnitKind number -> per-type cap (if set)
 }
 
 message UnitState {
@@ -342,6 +396,8 @@ message UnitState {
   double burning_damage_per_sec = 16;
   int64 burning_attacker_id = 17;  // 0 = none
   int64 target_id = 18;            // 0 = none
+  int32 model_state = 19;          // model UnitState ordinal (not forced IDLE)
+  reserved 20 to 25;
 }
 
 message ProjectileState {
@@ -353,6 +409,10 @@ message ProjectileState {
   UnitKind attacker_type = 6;
   Faction faction = 7;
   bool alive = 8;
+  int64 target_id = 9;             // homing target, 0 = none (v2)
+  int64 originator_id = 10;        // kill credit, 0 = none (v2)
+  double splash_radius = 11;
+  reserved 12 to 15;
 }
 
 message FireTile {
@@ -393,8 +453,11 @@ message SaveMeta {
 }
 
 // A save state is a base snapshot plus the queue of player actions applied
-// since, with the current head snapshot for instant restore. Persisted and
-// transferred gzip-compressed.
+// since, with the current head snapshot for instant restore. The queue is
+// an audit trail: SaveCodec.replayHolds re-applies it to the base and
+// checks it reproduces the head's deployment, so a save can prove its own
+// history instead of merely asserting it. Persisted gzip-compressed and
+// sealed whole (field 9) by the issuing server.
 message SaveRecord {
   int32 version = 1;                  // record format version, currently 1
   string save_id = 2;
@@ -402,8 +465,18 @@ message SaveRecord {
   string label = 4;
   string saved_by = 5;
   Snapshot base = 6;                  // checkpoint the action queue builds on
-  repeated PlayerMessage actions = 7; // journaled actions since base
+  repeated JournalAction actions = 7; // journaled actions since base (bounded)
   Snapshot head = 8;                  // current state; restore uses this
+  bytes seal = 9;                     // HMAC over the record with this cleared
+  reserved 10 to 15;
+}
+
+// One journaled action with the faction that issued it — a raw
+// PlayerMessage loses its author, and an audit that must guess
+// authorship from map halves is no audit at all.
+message JournalAction {
+  Faction faction = 1;
+  PlayerMessage message = 2;
 }
 
 message FetchSave {
@@ -420,7 +493,7 @@ message MatchRecord {
   int64 ended_epoch_ms = 2;
   PlayerProfile red = 3;
   PlayerProfile blue = 4;
-  string winner_id = 5;    // player_id, empty on draw
+  string winner_id = 5;    // player_id, empty on draw; must be red or blue
   bool draw = 6;
   bool resigned = 7;
   int64 ticks = 8;
@@ -428,6 +501,11 @@ message MatchRecord {
   int32 red_left = 10;
   int32 blue_left = 11;
   string map_id = 12;
+  // HMAC of the hosting server under the mesh realm's shared secret (the
+  // Concordat). Empty only inside realms that explicitly run open.
+  bytes signature = 13;
+  string issuer_id = 14;   // node/profile id of the issuing server
+  reserved 15 to 20;
 }
 
 message LeaderboardEntry {
@@ -444,16 +522,17 @@ message Leaderboard {
   int32 total_records = 2;                // records aggregated over
 }
 
-// Mesh gossip: two servers exchange match records and aggregate leaderboards
-// over the union. Merging is by match_id, so re-syncing is idempotent and two
-// leaderboards joining the same mesh simply aggregate their totals.
+// Mesh gossip (the Concordat of Realms): two servers join leaderboards the
+// way kingdoms join by marriage — heralds exchange what each court knows,
+// the chronicles merge by union, and both realms emerge one. Enterprise
+// translation available in the README.
 service BloodfieldMesh {
   rpc Sync(stream MeshMessage) returns (stream MeshMessage);
 }
 
 message MeshMessage {
   oneof msg {
-    MeshHello hello = 1;      // first message both ways: profile + known record ids
+    MeshHello hello = 1;      // REQUIRED first: profile + known record ids
     MatchRecord record = 2;   // a record the peer announced it is missing
     Leaderboard board = 3;    // final message: aggregate over the merged store
   }

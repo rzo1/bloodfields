@@ -131,12 +131,13 @@ class TelnetSessionFlowTest {
 
         byte[] banner = rawLog.toByteArray();
         assertTrue(banner.length >= 6, "expected negotiation bytes, got " + banner.length);
-        assertEquals((byte) 255, banner[0]);
-        assertEquals((byte) 251, banner[1]);
-        assertEquals((byte) 1, banner[2], "first negotiation must be IAC WILL ECHO");
-        assertEquals((byte) 255, banner[3]);
-        assertEquals((byte) 251, banner[4]);
-        assertEquals((byte) 3, banner[5], "second negotiation must be IAC WILL SGA");
+        // WILL BINARY, DO BINARY (PETSCII needs bytes above 0x7F), then
+        // WILL ECHO, WILL SGA, DO SGA for character-at-a-time input.
+        int[] expected = {255, 251, 0, 255, 253, 0, 255, 251, 1, 255, 251, 3, 255, 253, 3};
+        assertTrue(banner.length >= expected.length, "expected 15 negotiation bytes");
+        for (int i = 0; i < expected.length; i++) {
+            assertEquals((byte) expected[i], banner[i], "negotiation byte " + i);
+        }
 
         assertTrue(term.contains("B L O O D F I E L D"), "title");
         assertTrue(term.contains("C64 TELNET EDITION"), "subtitle");
@@ -271,7 +272,7 @@ class TelnetSessionFlowTest {
     }
 
     @Test
-    void skirmishLowBudgetReturnsToMenu() throws Exception {
+    void skirmishLowBudgetExplainsAndReasks() throws Exception {
         connect();
         awaitText("1 - CAMPAIGN");
         send('2');
@@ -279,7 +280,10 @@ class TelnetSessionFlowTest {
         send('1', 13);
         awaitText("BUDGET 100-10000");
         send('5', '0', 13); // below the 100 minimum
-        awaitText("1 - CAMPAIGN");
+        // No silent dump at the menu: the player is told why and re-asked.
+        awaitText("BUDGET MUST BE 100-10000");
+        send('5', '0', '0', 13);
+        awaitText("ENEMY DRAGON OPT-IN");
     }
 
     @Test

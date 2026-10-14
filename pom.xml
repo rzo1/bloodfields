@@ -14,8 +14,8 @@
         <maven.compiler.release>21</maven.compiler.release>
         <javafx.version>21.0.4</javafx.version>
         <junit.version>5.11.0</junit.version>
-        <grpc.version>1.68.2</grpc.version>
-        <protobuf.version>3.25.5</protobuf.version>
+        <grpc.version>1.84.2</grpc.version>
+        <protobuf.version>4.36.2</protobuf.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <gitcommitid.skip>false</gitcommitid.skip>
         <jpackage.appVersion>1.1.4</jpackage.appVersion>
@@ -406,9 +406,9 @@
         </dependency>
         <!-- generated gRPC stubs reference javax.annotation.Generated -->
         <dependency>
-            <groupId>org.apache.tomcat</groupId>
-            <artifactId>annotations-api</artifactId>
-            <version>6.0.53</version>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <version>2.1.1</version>
         </dependency>
         <!-- in-process transport for tests (no sockets) -->
         <dependency>
@@ -510,6 +510,32 @@
                 </configuration>
             </plugin>
             <plugin>
+                <!-- Build the C64 character ROM from the designed charset in
+                     telnet/C64Charset.java and package it in the jar. The
+                     telnet byte stream is unchanged; the ROM is swapped in
+                     on the C64/emulator side. Regenerate docs images with
+                     C64CharsetTool's demo mode. -->
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>generate-c64-charset</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.github.rzo1.bloodfields.telnet.C64CharsetTool</mainClass>
+                            <arguments>
+                                <argument>charset</argument>
+                                <argument>${project.build.outputDirectory}/bloodfield-chargen.bin</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.openjfx</groupId>
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
@@ -536,8 +562,26 @@
                                     <mainClass>com.github.rzo1.bloodfields.ui.Launcher</mainClass>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <!-- Aggregate third-party attributions instead of letting
+                                     META-INF/LICENSE(.txt) files overwrite each other. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer">
+                                    <addHeader>false</addHeader>
+                                </transformer>
                             </transformers>
                             <filters>
+                                <filter>
+                                    <!-- The server speaks plaintext only: drop the
+                                         ~15 MB of tcnative/BoringSSL natives for five
+                                         platforms that ride inside grpc-netty-shaded. -->
+                                    <artifact>io.grpc:grpc-netty-shaded</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/native/**</exclude>
+                                        <exclude>**/*.so</exclude>
+                                        <exclude>**/*.dll</exclude>
+                                        <exclude>**/*.dylib</exclude>
+                                    </excludes>
+                                </filter>
                                 <filter>
                                     <artifact>*:*</artifact>
                                     <excludes>

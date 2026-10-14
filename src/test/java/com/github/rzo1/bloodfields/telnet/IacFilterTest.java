@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 class IacFilterTest {
 
-    private final TelnetSession.IacFilter filter = new TelnetSession.IacFilter();
+    private final IacFilter filter = new IacFilter();
 
     private static ByteArrayInputStream bytes(int... data) {
         byte[] raw = new byte[data.length];
@@ -27,9 +27,9 @@ class IacFilterTest {
 
     @Test
     void plainBytesPassThroughUnchanged() throws IOException {
-        int[] samples = {0, 1, 13, 32, 65, 90, 127, 128, 160, 192, 254};
+        int[] samples = {0, 1, 13, 32, 65, 90, 128, 160, 192, 254};
         for (int s : samples) {
-            TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+            IacFilter f = new IacFilter();
             assertEquals(s, f.read(bytes(s), new ByteArrayOutputStream()),
                     "byte " + s + " should pass through");
         }
@@ -38,7 +38,7 @@ class IacFilterTest {
     @Test
     void asciiLowercaseIsDecodedToUppercase() throws IOException {
         for (int b = 'a'; b <= 'z'; b++) {
-            TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+            IacFilter f = new IacFilter();
             assertEquals(b - 32, f.read(bytes(b), new ByteArrayOutputStream()),
                     "byte " + (char) b + " should decode to uppercase");
         }
@@ -47,7 +47,7 @@ class IacFilterTest {
     @Test
     void shiftedPetsciiLettersDecodeToAsciiLetters() throws IOException {
         for (int b = 0xC1; b <= 0xDA; b++) {
-            TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+            IacFilter f = new IacFilter();
             assertEquals(b - 0x80, f.read(bytes(b), new ByteArrayOutputStream()),
                     "shifted PETSCII byte " + Integer.toHexString(b) + " should decode");
         }
@@ -59,28 +59,48 @@ class IacFilterTest {
     }
 
     @Test
-    void iacDoIsAnsweredWithWontAndReadContinues() throws IOException {
+    void iacDoForOfferedOptionIsAcknowledgedSilently() throws IOException {
+        // The server offered WILL ECHO at connect; the client's DO ECHO is
+        // the acceptance of that offer. Answering WONT here would withdraw
+        // ECHO and drop compliant clients back to local echo / line mode.
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        // IAC DO ECHO (255 253 1), then a data byte 'A'.
         int key = filter.read(bytes(255, 253, 1, 'A'), out);
         assertEquals('A', key);
+        assertEquals(0, out.size(), "DO for an offered option must be silently acknowledged");
+    }
+
+    @Test
+    void iacDoForUnofferedOptionIsAnsweredWithWont() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        // IAC DO NAWS (255 253 31): never offered, so refuse it.
+        int key = filter.read(bytes(255, 253, 31, 'A'), out);
+        assertEquals('A', key);
         byte[] response = out.toByteArray();
-        assertEquals(3, response.length, "expected IAC WONT ECHO response, got " + response.length + " bytes");
+        assertEquals(3, response.length, "expected IAC WONT NAWS response");
         assertEquals((byte) 255, response[0]);
         assertEquals((byte) 252, response[1], "second byte should be WONT");
-        assertEquals((byte) 1, response[2]);
+        assertEquals((byte) 31, response[2]);
+    }
+
+    @Test
+    void iacWillForRequestedOptionIsAcknowledgedSilently() throws IOException {
+        // Server sent DO BINARY + DO SGA; WILL replies accept them.
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int key = filter.read(bytes(255, 251, 0, 255, 251, 3, 'A'), out);
+        assertEquals('A', key);
+        assertEquals(0, out.size());
     }
 
     @Test
     void iacWillIsAnsweredWithDontAndReadContinues() throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        int key = filter.read(bytes(255, 251, 3, 'B'), out);
+        int key = filter.read(bytes(255, 251, 31, 'B'), out);
         assertEquals('B', key);
         byte[] response = out.toByteArray();
         assertEquals(3, response.length);
         assertEquals((byte) 255, response[0]);
         assertEquals((byte) 254, response[1], "second byte should be DONT");
-        assertEquals((byte) 3, response[2]);
+        assertEquals((byte) 31, response[2]);
     }
 
     @Test
@@ -139,10 +159,10 @@ class IacFilterTest {
     @Test
     void readReturnsDecodedLettersAfterNegotiation() throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        // IAC DO 1, IAC WILL 3, then lowercase 'q' must decode to 'Q'.
+        // IAC DO 1 (ack of WILL ECHO), IAC WILL 3 (ack of DO SGA), then 'q'.
         int key = filter.read(bytes(255, 253, 1, 255, 251, 3, 'q'), out);
         assertEquals('Q', key);
-        assertEquals(6, out.size(), "two 3-byte refusal responses expected");
+        assertEquals(0, out.size(), "acknowledgements must not be answered");
     }
 
     @Test
@@ -168,11 +188,7 @@ class IacFilterTest {
         int key = filter.read(in, out);
         assertEquals('A', key);
         writer.join(2000);
-        byte[] response = out.toByteArray();
-        assertEquals(3, response.length);
-        assertEquals((byte) 255, response[0]);
-        assertEquals((byte) 252, response[1]);
-        assertEquals((byte) 1, response[2]);
+        assertEquals(0, out.size(), "DO ECHO acknowledges WILL ECHO, even drip-fed");
     }
 
     @Test
@@ -200,25 +216,23 @@ class IacFilterTest {
 
     @Test
     void pollReturnsMinusOneWhenNothingAvailable() throws IOException {
-        TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+        IacFilter f = new IacFilter();
         assertEquals(-1, f.poll(new ByteArrayInputStream(new byte[0]), new ByteArrayOutputStream()));
     }
 
     @Test
     void pollReturnsMinusOneWhenOnlyNegotiationIsAvailable() throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+        IacFilter f = new IacFilter();
         // Whole IAC DO ECHO is available, but no data byte follows.
         int r = f.poll(bytes(255, 253, 1), out);
         assertEquals(-1, r);
-        byte[] response = out.toByteArray();
-        assertEquals(3, response.length, "WONT response should still be written");
-        assertEquals((byte) 252, response[1]);
+        assertEquals(0, out.size(), "DO ECHO is an acknowledgement; no WONT");
     }
 
     @Test
     void pollConsumesAvailableBytesAndReturnsFirstDecodedKey() throws IOException {
-        TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+        IacFilter f = new IacFilter();
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         java.io.ByteArrayInputStream in = bytes('q', 255, 253, 1, 'x');
         int r = f.poll(in, out);
@@ -226,25 +240,25 @@ class IacFilterTest {
         // The negotiation junk and trailing data byte are still in the stream.
         assertEquals('X', f.poll(in, out));
         assertEquals(0, in.available());
-        assertEquals(3, out.size());
+        assertEquals(0, out.size());
     }
 
     @Test
     void pollDecodesShiftedPetscii() throws IOException {
-        TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+        IacFilter f = new IacFilter();
         assertEquals('M', f.poll(bytes(0xCD), new ByteArrayOutputStream()));
     }
 
     @Test
     void eofThrowsEOFException() {
-        TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+        IacFilter f = new IacFilter();
         assertThrows(EOFException.class,
                 () -> f.read(new ByteArrayInputStream(new byte[0]), new ByteArrayOutputStream()));
     }
 
     @Test
     void eofMidNegotiationThrowsEOFException() {
-        TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+        IacFilter f = new IacFilter();
         // Stream ends right after IAC DO — no option byte, no data.
         assertThrows(EOFException.class,
                 () -> f.read(bytes(255, 253), new ByteArrayOutputStream()));
@@ -252,7 +266,7 @@ class IacFilterTest {
 
     @Test
     void eofInsideSubnegotiationThrowsEOFException() {
-        TelnetSession.IacFilter f = new TelnetSession.IacFilter();
+        IacFilter f = new IacFilter();
         assertThrows(EOFException.class,
                 () -> f.read(bytes(255, 250, 1, 2), new ByteArrayOutputStream()));
     }
@@ -272,5 +286,47 @@ class IacFilterTest {
         filter.read(bytes(255, 253, 24, 'K'), out);
         assertTrue(flushed[0], "WONT response must be flushed");
         assertEquals(3, out.size());
+    }
+
+    @Test
+    void crlfTerminatorDoesNotLeakLfIntoNextRead() throws IOException {
+        IacFilter f = new IacFilter();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        java.io.ByteArrayInputStream in = bytes(13, 10, 'Y');
+        assertEquals(13, f.read(in, out));
+        assertEquals('Y', f.read(in, out), "LF of CRLF is framing, not the next answer");
+    }
+
+    @Test
+    void crNulTerminatorDoesNotLeakNulIntoNextRead() throws IOException {
+        IacFilter f = new IacFilter();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        java.io.ByteArrayInputStream in = bytes(13, 0, 'N');
+        assertEquals(13, f.read(in, out));
+        assertEquals('N', f.read(in, out));
+    }
+
+    @Test
+    void ansiArrowsDecodeToPetsciiCursorKeys() throws IOException {
+        assertEquals(Petscii.KEY_UP, new IacFilter().read(bytes(27, '[', 'A'), new ByteArrayOutputStream()));
+        assertEquals(Petscii.KEY_DOWN, new IacFilter().read(bytes(27, '[', 'B'), new ByteArrayOutputStream()));
+        assertEquals(Petscii.KEY_RIGHT, new IacFilter().read(bytes(27, 'O', 'C'), new ByteArrayOutputStream()));
+        assertEquals(Petscii.KEY_LEFT, new IacFilter().read(bytes(27, 'O', 'D'), new ByteArrayOutputStream()));
+    }
+
+    @Test
+    void pcDeleteBytesDecodeToPetsciiDel() throws IOException {
+        assertEquals(Petscii.KEY_DEL, new IacFilter().read(bytes(0x7F), new ByteArrayOutputStream()));
+        assertEquals(Petscii.KEY_DEL, new IacFilter().read(bytes(0x08), new ByteArrayOutputStream()));
+    }
+
+    @Test
+    void pollThrowsOnEofInsteadOfMaskingIt() {
+        IacFilter f = new IacFilter();
+        java.io.InputStream eof = new java.io.InputStream() {
+            @Override public int read() { return -1; }
+            @Override public int available() { return 1; }
+        };
+        assertThrows(EOFException.class, () -> f.poll(eof, new ByteArrayOutputStream()));
     }
 }

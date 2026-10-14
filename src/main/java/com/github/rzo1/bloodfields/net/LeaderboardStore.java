@@ -1,6 +1,7 @@
 package com.github.rzo1.bloodfields.net;
 
-import com.github.rzo1.bloodfields.cli.Json;
+import com.github.rzo1.bloodfields.util.AtomicFiles;
+import com.github.rzo1.bloodfields.util.Json;
 import com.github.rzo1.bloodfields.net.proto.Leaderboard;
 import com.github.rzo1.bloodfields.net.proto.LeaderboardEntry;
 import com.github.rzo1.bloodfields.net.proto.MatchRecord;
@@ -43,17 +44,21 @@ public final class LeaderboardStore {
         return new LeaderboardStore(dataDir.resolve("records.json"));
     }
 
-    public synchronized void add(MatchRecord r) {
-        if (r == null || r.getMatchId().isBlank()) return;
-        if (records.putIfAbsent(r.getMatchId(), r) == null) persist();
+    /** Adds if valid and new. @return true if the record entered the chronicle */
+    public synchronized boolean add(MatchRecord r) {
+        if (!isValid(r)) return false;
+        if (records.putIfAbsent(r.getMatchId(), r) == null) {
+            persist();
+            return true;
+        }
+        return false;
     }
 
     public synchronized int merge(List<MatchRecord> rs) {
         int added = 0;
         if (rs != null) {
             for (MatchRecord r : rs) {
-                if (r != null && !r.getMatchId().isBlank()
-                        && records.putIfAbsent(r.getMatchId(), r) == null) {
+                if (isValid(r) && records.putIfAbsent(r.getMatchId(), r) == null) {
                     added++;
                 }
             }
@@ -62,19 +67,30 @@ public final class LeaderboardStore {
         return added;
     }
 
-    public List<MatchRecord> records() {
+    public synchronized List<MatchRecord> records() {
         List<MatchRecord> out = new ArrayList<>(records.values());
         out.sort(Comparator.comparingLong(MatchRecord::getEndedEpochMs));
         return out;
     }
 
-    public Set<String> ids() {
+    public synchronized Set<String> ids() {
         return Set.copyOf(records.keySet());
     }
 
     public Leaderboard aggregate() {
+        // Snapshot under the lock; tally outside it. Readers and writers
+        // (mesh callbacks, match executor) can no longer meet mid-iteration.
+        List<MatchRecord> snapshot;
+        synchronized (this) {
+            snapshot = new ArrayList<>(records.values());
+        }
         Map<String, Stats> byPlayer = new HashMap<>();
-        for (MatchRecord r : records.values()) {
+        for (MatchRecord r : snapshot) {
+            // A man cannot fight himself and win twice: same-id records
+            // (one proxy lending both seats its name) count for no one.
+            String redId = r.getRed().getPlayerId();
+            String blueId = r.getBlue().getPlayerId();
+            if (!redId.isBlank() && redId.equals(blueId)) continue;
             tally(byPlayer, r.getRed(), r);
             tally(byPlayer, r.getBlue(), r);
         }
@@ -96,8 +112,48 @@ public final class LeaderboardStore {
         });
         return Leaderboard.newBuilder()
                 .addAllEntries(entries)
-                .setTotalRecords(records.size())
+                .setTotalRecords(snapshot.size())
                 .build();
+    }
+
+    /**
+     * Structural law for chronicle entries, whoever carries them: sane id,
+     * two distinct named combatants, winner among them (or an honest draw),
+     * bounded numbers, a plausible hour. Forged rhapsodies stop here.
+     */
+    public static boolean isValid(MatchRecord r) {
+        if (r == null || r.getMatchId().isBlank() || r.getMatchId().length() > 64) return false;
+        String redId = r.getRed().getPlayerId();
+        String blueId = r.getBlue().getPlayerId();
+        if (redId.isBlank() || blueId.isBlank() || redId.equals(blueId)) return false;
+        if (redId.length() > 64 || blueId.length() > 64) return false;
+        if (r.getRed().getName().length() > 64 || r.getBlue().getName().length() > 64) return false;
+        if (r.getDraw()) {
+            if (!r.getWinnerId().isEmpty()) return false;
+        } else if (!r.getWinnerId().equals(redId) && !r.getWinnerId().equals(blueId)) {
+            return false;
+        }
+        long ended = r.getEndedEpochMs();
+        if (ended < 1_577_836_800_000L || ended > System.currentTimeMillis() + 86_400_000L) return false;
+        if (r.getTicks() < 0 || r.getTicks() > 100_000_000L) return false;
+        if (!Double.isFinite(r.getSimTime()) || r.getSimTime() < 0.0 || r.getSimTime() > 100_000.0) return false;
+        if (r.getRedLeft() < 0 || r.getBlueLeft() < 0
+                || r.getRedLeft() > 100_000 || r.getBlueLeft() > 100_000) return false;
+        return r.getMapId().length() <= 64 && r.getIssuerId().length() <= 64;
+    }
+
+    /** Signs a record under the realm secret (see {@link MeshTrust}). */
+    static MatchRecord signed(MatchRecord r, SnapshotSigner signer, String issuerId) {
+        MatchRecord unsigned = r.toBuilder().clearSignature().setIssuerId(issuerId).build();
+        return unsigned.toBuilder()
+                .setSignature(com.google.protobuf.ByteString.copyFrom(
+                        signer.macBytes(unsigned.toByteArray())))
+                .build();
+    }
+
+    static boolean signatureValid(MatchRecord r, SnapshotSigner signer) {
+        MatchRecord unsigned = r.toBuilder().clearSignature().build();
+        return signer.verifyBytes(unsigned.toByteArray(), r.getSignature().toByteArray());
     }
 
     private static final class Stats {
@@ -138,7 +194,7 @@ public final class LeaderboardStore {
             for (Object o : list) {
                 try {
                     MatchRecord r = decodeRecord(o);
-                    if (!r.getMatchId().isBlank()) records.putIfAbsent(r.getMatchId(), r);
+                    if (isValid(r)) records.putIfAbsent(r.getMatchId(), r);
                 } catch (RuntimeException e) {
                     // skip malformed record entries
                 }
@@ -146,8 +202,12 @@ public final class LeaderboardStore {
         } catch (RuntimeException | IOException e) {
             records.clear();
             try {
-                Files.move(file, file.resolveSibling(file.getFileName() + ".bak"),
-                        StandardCopyOption.REPLACE_EXISTING);
+                Path bak = file.resolveSibling(file.getFileName() + ".bak");
+                if (Files.exists(bak)) {
+                    bak = file.resolveSibling(
+                            file.getFileName() + "." + System.currentTimeMillis() + ".bak");
+                }
+                Files.move(file, bak, StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException ioe) {
                 throw new UncheckedIOException("cannot back up corrupt records file", ioe);
             }
@@ -159,16 +219,7 @@ public final class LeaderboardStore {
         for (MatchRecord r : records.values()) arr.add(encodeRecord(r));
         String json = Json.obj().kv("records", arr.build()).build();
         try {
-            Path parent = file.getParent();
-            if (parent != null) Files.createDirectories(parent);
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.writeString(tmp, json, StandardCharsets.UTF_8);
-            try {
-                Files.move(tmp, file,
-                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-            }
+            AtomicFiles.writeString(file, json);
         } catch (IOException e) {
             throw new UncheckedIOException("cannot persist records", e);
         }
@@ -188,6 +239,9 @@ public final class LeaderboardStore {
                 .num("redLeft", r.getRedLeft())
                 .num("blueLeft", r.getBlueLeft())
                 .str("mapId", r.getMapId())
+                .str("issuerId", r.getIssuerId())
+                .str("signature", java.util.Base64.getEncoder().encodeToString(
+                        r.getSignature().toByteArray()))
                 .build();
     }
 
@@ -213,6 +267,8 @@ public final class LeaderboardStore {
                 .setRedLeft((int) lng(m, "redLeft"))
                 .setBlueLeft((int) lng(m, "blueLeft"))
                 .setMapId(str(m, "mapId"))
+                .setIssuerId(str(m, "issuerId"))
+                .setSignature(com.google.protobuf.ByteString.copyFrom(decode64(str(m, "signature"))))
                 .build();
     }
 
@@ -243,6 +299,14 @@ public final class LeaderboardStore {
     private static long lng(Map<String, Object> m, String k) {
         Object v = m.get(k);
         return v instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private static byte[] decode64(String s) {
+        try {
+            return s.isEmpty() ? new byte[0] : java.util.Base64.getDecoder().decode(s);
+        } catch (IllegalArgumentException e) {
+            return new byte[0];
+        }
     }
 
     private static double dbl(Map<String, Object> m, String k) {

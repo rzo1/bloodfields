@@ -154,6 +154,22 @@ class PetsciiScreenTest {
         assertEquals(Petscii.GREEN, scr.colorAt(4, 4));
     }
 
+    @Test
+    void byte0xFFIsEscapedAsIacIac() throws IOException {
+        // No current glyph is 0xFF, but the wire format must stay valid if
+        // one ever is: a literal 0xFF doubles as IAC IAC (RFC 854).
+        PetsciiScreen scr = new PetsciiScreen();
+        scr.set(0, 0, (byte) 0xFF, Petscii.WHITE);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        scr.present(out);
+        byte[] bytes = out.toByteArray();
+        boolean doubled = false;
+        for (int i = 0; i + 1 < bytes.length; i++) {
+            if (bytes[i] == (byte) 0xFF && bytes[i + 1] == (byte) 0xFF) doubled = true;
+        }
+        assertTrue(doubled, "0xFF must be sent as IAC IAC");
+    }
+
     private static void assertContains(byte[] haystack, byte needle) {
         for (byte b : haystack) {
             if (b == needle) return;

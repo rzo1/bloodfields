@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.github.rzo1.bloodfields.cli.Json;
+import com.github.rzo1.bloodfields.util.Json;
 import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

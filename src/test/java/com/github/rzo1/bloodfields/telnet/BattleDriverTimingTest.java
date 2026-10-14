@@ -3,6 +3,7 @@ package com.github.rzo1.bloodfields.telnet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.github.rzo1.bloodfields.engine.BattleDriver;
 import com.github.rzo1.bloodfields.cli.HeadlessGame;
 import com.github.rzo1.bloodfields.engine.World;
 import com.github.rzo1.bloodfields.model.Faction;
@@ -10,6 +11,8 @@ import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitType;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * Timing behavior of {@link BattleDriver}: speed multipliers, the 600-tick
@@ -39,46 +42,16 @@ class BattleDriverTimingTest {
         return game.simTime() - before;
     }
 
-    @Test
-    void halfSpeedSimsHalfASecondPerSecond() {
+    @ParameterizedTest(name = "speed index {0} sims {1} sim-seconds per wall second")
+    @CsvSource({"0, 0.5", "1, 1.0", "2, 2.0", "3, 4.0"})
+    void speedsScaleSimTimePerWallSecond(int speedIndex, double expectedPerSecond) {
         HeadlessGame game = eternalGame();
         BattleDriver driver = new BattleDriver(game);
-        driver.setSpeedIndex(0);
+        driver.setSpeedIndex(speedIndex);
         for (int i = 0; i < 5; i++) {
             double delta = simDelta(game, driver, 1.0);
-            assertEquals(0.5, delta, DT_EPSILON, "0.5x: second " + i);
-        }
-    }
-
-    @Test
-    void normalSpeedSimsOneSecondPerSecond() {
-        HeadlessGame game = eternalGame();
-        BattleDriver driver = new BattleDriver(game);
-        for (int i = 0; i < 5; i++) {
-            double delta = simDelta(game, driver, 1.0);
-            assertEquals(1.0, delta, DT_EPSILON, "1x: second " + i);
-        }
-    }
-
-    @Test
-    void doubleSpeedSimsTwoSecondsPerSecond() {
-        HeadlessGame game = eternalGame();
-        BattleDriver driver = new BattleDriver(game);
-        driver.setSpeedIndex(2);
-        for (int i = 0; i < 5; i++) {
-            double delta = simDelta(game, driver, 1.0);
-            assertEquals(2.0, delta, DT_EPSILON, "2x: second " + i);
-        }
-    }
-
-    @Test
-    void quadSpeedSimsFourSecondsPerSecond() {
-        HeadlessGame game = eternalGame();
-        BattleDriver driver = new BattleDriver(game);
-        driver.setSpeedIndex(3);
-        for (int i = 0; i < 5; i++) {
-            double delta = simDelta(game, driver, 1.0);
-            assertEquals(4.0, delta, DT_EPSILON, "4x: second " + i);
+            assertEquals(expectedPerSecond, delta, DT_EPSILON,
+                    expectedPerSecond + "x: second " + i);
         }
     }
 
@@ -206,7 +179,8 @@ class BattleDriverTimingTest {
         }
         assertEquals(BattleDriver.End.DRAW, end);
         assertTrue(game.simTime() >= 600.0, "draw must trigger at 600 sim seconds");
-        assertTrue(game.simTime() < 610.0, "draw must not overshoot the cap by a full chunk");
+        assertTrue(game.simTime() <= 600.0 + 1.0 / 60.0,
+                "advance must stop at the cap, not overshoot by a tick batch: " + game.simTime());
     }
 
     @Test

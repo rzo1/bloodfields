@@ -1,23 +1,19 @@
 package com.github.rzo1.bloodfields.telnet;
 
+import com.github.rzo1.bloodfields.engine.BattleDriver;
 import com.github.rzo1.bloodfields.ai.SkirmishBot;
 import com.github.rzo1.bloodfields.cli.HeadlessGame;
-import com.github.rzo1.bloodfields.engine.GameState;
-import com.github.rzo1.bloodfields.engine.Structure;
-import com.github.rzo1.bloodfields.engine.World;
 import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.HeroSkill;
-import com.github.rzo1.bloodfields.model.Terrain;
 import com.github.rzo1.bloodfields.model.UnitType;
 import com.github.rzo1.bloodfields.ui.Level;
 import com.github.rzo1.bloodfields.ui.LevelCodes;
 import com.github.rzo1.bloodfields.ui.Levels;
 import com.github.rzo1.bloodfields.ui.MapPreset;
-import com.github.rzo1.bloodfields.ui.MapStructures;
 import com.github.rzo1.bloodfields.ui.Maps;
 
-import java.io.EOFException;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -25,35 +21,36 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.util.List;
 import java.util.Random;
-import java.util.function.Supplier;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
- * One connected C64 (or PETSCII-capable) client. Single-threaded: menus and
- * deployment use blocking key reads, the battle loop polls keys without
- * blocking between frames. All output is PETSCII bytes; typed letters arrive
- * as $41-$5A in uppercase mode or $C1-$DA shifted in lowercase mode, both are
- * decoded to plain ASCII key codes by {@link IacFilter}.
+ * One connected C64 (or PETSCII-capable) client. Menus and deployment use
+ * blocking key reads; the battle loop polls keys without blocking between
+ * frames. All output is PETSCII bytes; typed letters arrive as $41-$5A in
+ * uppercase mode or $C1-$DA shifted in lowercase mode, and PC clients'
+ * ANSI arrows / DEL are also accepted — everything is decoded to the
+ * {@code Petscii.KEY_*} codes by {@link IacFilter}.
+ *
+ * <p>Robustness: every write passes through a bounded writer thread with a
+ * deadline, so a client that stops reading (zero TCP window) is dropped
+ * instead of chaining this thread forever; that blocking flush is also the
+ * 9600-baud backpressure — a slow link paces the frame loop rather than
+ * queueing unbounded output. Idleness is enforced by {@code SO_TIMEOUT} on
+ * blocking reads and by a wall-clock check in the (polling) battle loop,
+ * where a paused battle with no key for 15 minutes ends the session.
  */
 public final class TelnetSession implements Runnable {
 
     private static final int IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+    private static final long WRITE_TIMEOUT_MS = 10_000;
     private static final long FRAME_MS = 700;
     private static final long FLASH_NANOS = 2_500_000_000L;
 
-    private static final int KEY_CR = 13;
-    private static final int KEY_DOWN = 17;
-    private static final int KEY_DEL = 20;
-    private static final int KEY_RIGHT = 29;
-    private static final int KEY_UP = 145;
-    private static final int KEY_LEFT = 157;
-    private static final int KEY_SPACE = 32;
-
-    private static final char[] UNIT_KEYS = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'G'};
-    private static final UnitType[] UNIT_TYPES = {
-            UnitType.INFANTRY, UnitType.ARCHER, UnitType.CAVALRY, UnitType.MAGE,
-            UnitType.NECROMANCER, UnitType.HEALER, UnitType.CATAPULT, UnitType.ASSASSIN,
-            UnitType.GOLEM, UnitType.PIKEMAN, UnitType.GENERAL
-    };
 
     private static final int MIN_BUDGET = 100;
     private static final int MAX_BUDGET = 10000;
@@ -64,8 +61,10 @@ public final class TelnetSession implements Runnable {
     private final IacFilter iac = new IacFilter();
     private InputStream in;
     private OutputStream out;
+    private ExecutorService writer;
     private String flash;
     private long flashUntilNanos;
+    private long lastKeyNanos = System.nanoTime();
 
     public TelnetSession(Socket socket) {
         this.socket = socket;
@@ -75,9 +74,15 @@ public final class TelnetSession implements Runnable {
     public void run() {
         try {
             socket.setTcpNoDelay(true);
+            socket.setKeepAlive(true);
             socket.setSoTimeout(IDLE_TIMEOUT_MS);
             in = socket.getInputStream();
-            out = socket.getOutputStream();
+            writer = Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "bloodfield-telnet-writer");
+                t.setDaemon(true);
+                return t;
+            });
+            out = new DeadlineOutputStream(socket.getOutputStream());
             negotiate();
             boolean running = true;
             while (running) {
@@ -106,13 +111,7 @@ public final class TelnetSession implements Runnable {
     // ----- telnet + petscii plumbing -----
 
     private void negotiate() throws IOException {
-        // WILL ECHO + WILL SGA: character-at-a-time, no client local echo.
-        out.write(255); out.write(251); out.write(1);
-        out.write(255); out.write(251); out.write(3);
-        out.write(Petscii.CLEAR);
-        out.write(Petscii.UPPERCASE_MODE);
-        out.write(Petscii.WHITE);
-        out.flush();
+        SessionCommon.negotiate(out);
     }
 
     private void present() throws IOException {
@@ -126,11 +125,22 @@ public final class TelnetSession implements Runnable {
     }
 
     private int readKey() throws IOException {
-        return iac.read(in, out);
+        int k = iac.read(in, out);
+        lastKeyNanos = System.nanoTime();
+        return k;
     }
 
     private int pollKey() throws IOException {
-        return iac.poll(in, out);
+        int k = iac.poll(in, out);
+        if (k >= 0) lastKeyNanos = System.nanoTime();
+        return k;
+    }
+
+    /** Wall-clock idle check for polling loops, where SO_TIMEOUT never fires. */
+    private void checkIdle() throws SocketTimeoutException {
+        if (System.nanoTime() - lastKeyNanos > IDLE_TIMEOUT_MS * 1_000_000L) {
+            throw new SocketTimeoutException("idle too long");
+        }
     }
 
     private void positionCursor(int row, int col) throws IOException {
@@ -139,27 +149,37 @@ public final class TelnetSession implements Runnable {
         for (int i = 0; i < col; i++) out.write(Petscii.CURSOR_RIGHT);
     }
 
-    /** Line input with manual echo (the server claimed WILL ECHO at connect). */
+    /**
+     * Line input with manual echo (the server claimed WILL ECHO at connect).
+     * Echoed characters are also written into the screen model and the
+     * shadow is invalidated on CR, so the next {@code present()} repaints
+     * from the model alone — no ghosts of previous input survive a redraw.
+     * A CRLF / CR-NUL terminator's trailing byte is swallowed by
+     * {@link IacFilter}, never leaked into the next prompt.
+     */
     private String readLine(int row, int col, int max) throws IOException {
         positionCursor(row, col);
         StringBuilder sb = new StringBuilder();
         while (true) {
             int k = readKey();
-            if (k == KEY_CR) break;
-            if (k == KEY_DEL) {
+            if (k == Petscii.KEY_CR) break;
+            if (k == Petscii.KEY_DEL) {
                 if (sb.length() > 0) {
                     sb.setLength(sb.length() - 1);
+                    screen.set(col + sb.length(), row, (byte) ' ', Petscii.WHITE);
                     out.write(Petscii.DELETE);
                     out.flush();
                 }
                 continue;
             }
             if (k >= 0x20 && k <= 0x5A && sb.length() < max) {
+                screen.set(col + sb.length(), row, Petscii.encodeChar((char) k), Petscii.WHITE);
                 sb.append((char) k);
                 out.write(k);
                 out.flush();
             }
         }
+        screen.invalidate();
         return sb.toString().trim().toUpperCase();
     }
 
@@ -176,9 +196,58 @@ public final class TelnetSession implements Runnable {
     }
 
     private void closeQuietly() {
+        if (writer != null) writer.shutdownNow();
         try {
             socket.close();
         } catch (IOException ignored) { }
+    }
+
+    /**
+     * Buffers session output and flushes it on the writer thread with a hard
+     * deadline. A client that stops reading stalls the writer, not the
+     * session: the flush that exceeds {@link #WRITE_TIMEOUT_MS} closes the
+     * socket (which unblocks the writer) and fails the session. A slow but
+     * reading client simply paces {@code flush()} — that is the backpressure
+     * that keeps a 9600-baud link from accumulating an unbounded backlog.
+     */
+    private final class DeadlineOutputStream extends OutputStream {
+        private final OutputStream target;
+        private final ByteArrayOutputStream pending = new ByteArrayOutputStream(2048);
+
+        DeadlineOutputStream(OutputStream target) {
+            this.target = target;
+        }
+
+        @Override public synchronized void write(int b) {
+            pending.write(b);
+        }
+
+        @Override public synchronized void write(byte[] b, int off, int len) {
+            pending.write(b, off, len);
+        }
+
+        @Override public synchronized void flush() throws IOException {
+            if (pending.size() == 0) return;
+            byte[] bytes = pending.toByteArray();
+            pending.reset();
+            Future<?> done = writer.submit(() -> {
+                target.write(bytes);
+                target.flush();
+                return null;
+            });
+            try {
+                done.get(WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException slow) {
+                closeQuietly();
+                throw new IOException("client write timed out after " + WRITE_TIMEOUT_MS + " ms");
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted while writing", ie);
+            } catch (ExecutionException ee) {
+                if (ee.getCause() instanceof IOException ioe) throw ioe;
+                throw new IOException("write failed", ee.getCause());
+            }
+        }
     }
 
     // ----- screens -----
@@ -198,6 +267,7 @@ public final class TelnetSession implements Runnable {
         screen.center(15, "Q - LOG OFF", Petscii.WHITE);
         screen.center(18, "A 40-COLUMN AUTO-BATTLER", Petscii.DARK_GREY);
         screen.center(19, "SERVED IN PETSCII", Petscii.DARK_GREY);
+        screen.center(20, "CUSTOM CHARSET ROM: SEE THE DOCS", Petscii.DARK_GREY);
         present();
     }
 
@@ -236,14 +306,14 @@ public final class TelnetSession implements Runnable {
     private void showGoodbye() throws IOException {
         screen.clear((byte) ' ', Petscii.WHITE);
         screen.center(10, "THE CROWS WILL REMEMBER YOU.", Petscii.GREY);
-        screen.center(12, "ATA  6400", Petscii.DARK_GREY);
+        screen.center(12, "ATA  " + socket.getLocalPort(), Petscii.DARK_GREY);
         present();
     }
 
     private void waitForKey() throws IOException {
         while (true) {
             int k = readKey();
-            if (k == KEY_SPACE || k == KEY_CR || k == 'Q') return;
+            if (k == Petscii.KEY_SPACE || k == Petscii.KEY_CR || k == 'Q') return;
         }
     }
 
@@ -262,7 +332,7 @@ public final class TelnetSession implements Runnable {
                 continue;
             }
             Level lv = levels.get(idx);
-            HeadlessGame game = buildLevelGame(lv);
+            HeadlessGame game = HeadlessGame.forLevel(lv);
             if (deploy(game, lv.weather().displayName())) {
                 battle(game, idx);
             }
@@ -296,17 +366,6 @@ public final class TelnetSession implements Runnable {
         return LevelCodes.indexFor(s);
     }
 
-    private static HeadlessGame buildLevelGame(Level lv) {
-        World world = buildWorld(lv.mapId());
-        HeadlessGame game = HeadlessGame.fromMap(world, lv.playerBudget(),
-                MapStructures.forPreset(lv.mapId(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT, idSource()));
-        for (var e : lv.playerCaps().entrySet()) {
-            game.setPlayerCap(e.getKey(), e.getValue());
-        }
-        lv.spawner().spawn(game.enemy(), game.state(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT);
-        return game;
-    }
-
     // ----- skirmish -----
 
     private void skirmishFlow() throws IOException {
@@ -327,9 +386,7 @@ public final class TelnetSession implements Runnable {
         if (budget < 0) return;
         boolean dragons = askYesNo("ENEMY DRAGON OPT-IN (Y/N):");
         MapPreset map = maps.get(mapIdx);
-        World world = buildWorld(map.id());
-        HeadlessGame game = HeadlessGame.fromMap(world, budget,
-                MapStructures.forPreset(map.id(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT, idSource()));
+        HeadlessGame game = HeadlessGame.forMap(map.id(), budget);
         new SkirmishBot(new Random()).deployArmy(game.enemy(), game.state(),
                 HeadlessGame.WIDTH, HeadlessGame.HEIGHT, budget, dragons);
         if (deploy(game, null)) {
@@ -354,19 +411,24 @@ public final class TelnetSession implements Runnable {
     }
 
     private int askBudget() throws IOException {
-        screen.clear((byte) ' ', Petscii.WHITE);
-        screen.center(3, "SKIRMISH BUDGET", Petscii.LIGHT_RED);
-        screen.center(6, "BOTH ARMIES GET THE SAME POINTS.", Petscii.GREY);
-        screen.text(3, 10, "BUDGET 100-10000 [1000]:", Petscii.YELLOW);
-        present();
-        String s = readLine(11, 10, 6);
-        if (s.isEmpty()) return DEFAULT_BUDGET;
-        try {
-            int b = Integer.parseInt(s);
-            if (b < MIN_BUDGET || b > MAX_BUDGET) return -1;
-            return b;
-        } catch (NumberFormatException nfe) {
-            return -1;
+        String msg = null;
+        while (true) {
+            screen.clear((byte) ' ', Petscii.WHITE);
+            screen.center(3, "SKIRMISH BUDGET", Petscii.LIGHT_RED);
+            screen.center(6, "BOTH ARMIES GET THE SAME POINTS.", Petscii.GREY);
+            screen.text(3, 10, "BUDGET 100-10000 [1000]:", Petscii.YELLOW);
+            if (msg != null) {
+                screen.text(3, 13, msg, Petscii.LIGHT_RED);
+            }
+            present();
+            String s = readLine(11, 10, 6);
+            if (s.isEmpty()) return DEFAULT_BUDGET;
+            try {
+                int b = Integer.parseInt(s);
+                if (b >= MIN_BUDGET && b <= MAX_BUDGET) return b;
+            } catch (NumberFormatException ignored) { }
+            // Say why, and ask again — never dump the player silently at the menu.
+            msg = "BUDGET MUST BE 100-10000 - TRY AGAIN";
         }
     }
 
@@ -380,14 +442,17 @@ public final class TelnetSession implements Runnable {
     // ----- deployment -----
 
     private boolean deploy(HeadlessGame game, String weatherName) throws IOException {
-        int curC = PetsciiScreen.COLS / 2;
-        int curR = PetsciiRenderer.BOARD_ROWS - 6;
+        // Cursor lives in tile coordinates (40x25, one tile per cell); the
+        // 23-row viewport scrolls to follow it, so every tile row — notably
+        // row 18 inside the deployment zone — is reachable.
+        int curC = PetsciiRenderer.WORLD_COLS / 2;
+        int curR = PetsciiRenderer.WORLD_ROWS - 6;
+        int offset = PetsciiRenderer.offsetForCursor(curR, PetsciiRenderer.maxOffset());
         UnitType sel = UnitType.INFANTRY;
         if (weatherName != null) {
             flash("WEATHER: " + weatherName.toUpperCase());
         }
-        double cellW = HeadlessGame.WIDTH / (double) PetsciiScreen.COLS;
-        double cellH = HeadlessGame.HEIGHT / (double) PetsciiRenderer.BOARD_ROWS;
+        double tile = HeadlessGame.TILE;
         while (true) {
             Army player = game.player();
             StringBuilder hud1 = new StringBuilder();
@@ -402,21 +467,22 @@ public final class TelnetSession implements Runnable {
                 }
             }
             String hud2 = flashOr("CRSR SPC:PUT DEL:RMV K:SKL S:GO Q:OUT");
-            PetsciiRenderer.renderDeployment(screen, game, curC, curR, hud1.toString(), hud2);
+            offset = PetsciiRenderer.offsetForCursor(curR, offset);
+            PetsciiRenderer.renderDeployment(screen, game, curC, curR, offset, hud1.toString(), hud2);
             present();
             int k = readKey();
             UnitType picked = typeForKey(k);
-            if (k == KEY_UP) curR = Math.max(0, curR - 1);
-            else if (k == KEY_DOWN) curR = Math.min(PetsciiRenderer.BOARD_ROWS - 1, curR + 1);
-            else if (k == KEY_LEFT) curC = Math.max(0, curC - 1);
-            else if (k == KEY_RIGHT) curC = Math.min(PetsciiScreen.COLS - 1, curC + 1);
+            if (k == Petscii.KEY_UP) curR = Math.max(0, curR - 1);
+            else if (k == Petscii.KEY_DOWN) curR = Math.min(PetsciiRenderer.WORLD_ROWS - 1, curR + 1);
+            else if (k == Petscii.KEY_LEFT) curC = Math.max(0, curC - 1);
+            else if (k == Petscii.KEY_RIGHT) curC = Math.min(PetsciiRenderer.WORLD_COLS - 1, curC + 1);
             else if (picked != null) sel = picked;
-            else if (k == KEY_SPACE) {
-                HeadlessGame.PlaceResult r = game.place(sel, (curC + 0.5) * cellW, (curR + 0.5) * cellH);
+            else if (k == Petscii.KEY_SPACE) {
+                HeadlessGame.PlaceResult r = game.place(sel, (curC + 0.5) * tile, (curR + 0.5) * tile);
                 if (!r.success) flash(r.reason.toUpperCase());
             }
-            else if (k == KEY_DEL) {
-                flash(game.remove((curC + 0.5) * cellW, (curR + 0.5) * cellH)
+            else if (k == Petscii.KEY_DEL) {
+                flash(game.remove((curC + 0.5) * tile, (curR + 0.5) * tile)
                         ? "REMOVED" : "NOTHING THERE");
             }
             else if (k == 'K') {
@@ -439,20 +505,17 @@ public final class TelnetSession implements Runnable {
     }
 
     private static UnitType typeForKey(int k) {
-        for (int i = 0; i < UNIT_KEYS.length; i++) {
-            if (UNIT_KEYS[i] == k) return UNIT_TYPES[i];
-        }
-        return null;
+        return SessionCommon.typeForKey(k);
     }
 
     private void showUnitKeys() throws IOException {
         screen.clear((byte) ' ', Petscii.WHITE);
         screen.center(1, "UNIT KEYS", Petscii.LIGHT_RED);
-        for (int i = 0; i < UNIT_KEYS.length; i++) {
-            UnitType t = UNIT_TYPES[i];
+        for (int i = 0; i < SessionCommon.UNIT_KEYS.length; i++) {
+            UnitType t = SessionCommon.UNIT_TYPES[i];
             int col = (i % 2) == 0 ? 2 : 21;
             int row = 3 + i / 2;
-            screen.text(col, row, UNIT_KEYS[i] + " " + t.displayName().toUpperCase()
+            screen.text(col, row, SessionCommon.UNIT_KEYS[i] + " " + t.displayName().toUpperCase()
                     + " " + t.cost() + "P", Petscii.WHITE);
         }
         screen.center(11, "GENERAL CARRIES THE HERO SKILL.", Petscii.GREY);
@@ -469,8 +532,14 @@ public final class TelnetSession implements Runnable {
         flash("BATTLE!");
         boolean resigned = false;
         BattleDriver.End end = BattleDriver.End.NONE;
+        int offset = PetsciiRenderer.offsetForBattle(game);
         long last = System.nanoTime();
         while (true) {
+            // pollKey never blocks, so SO_TIMEOUT cannot fire here: enforce
+            // idleness by wall clock. An unpaused battle is bounded by the
+            // 600 s draw cap anyway; a paused one must not hold its slot
+            // (and its server seat) until the Long Night.
+            if (driver.paused()) checkIdle();
             int k;
             while ((k = pollKey()) != -1) {
                 if (k >= '1' && k <= '4') driver.setSpeedIndex(k - '1');
@@ -487,7 +556,10 @@ public final class TelnetSession implements Runnable {
                     + " T" + mmss(game.simTime())
                     + " " + driver.speedLabel();
             String hud2 = flashOr("1-4:SPD P:PAUSE Q:RESIGN");
-            PetsciiRenderer.renderBattle(screen, game, hud1, hud2);
+            // Follow the fighting with hysteresis so the 23-row viewport
+            // does not jitter between its three possible offsets.
+            offset = PetsciiRenderer.offsetForBattle(game);
+            PetsciiRenderer.renderBattle(screen, game, offset, hud1, hud2);
             present();
             if (end != BattleDriver.End.NONE) break;
             long spentMs = (System.nanoTime() - now) / 1_000_000;
@@ -532,132 +604,7 @@ public final class TelnetSession implements Runnable {
     }
 
     private static String mmss(double simSeconds) {
-        long t = (long) simSeconds;
-        long m = t / 60;
-        long s = t % 60;
-        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+        return SessionCommon.mmss(simSeconds);
     }
 
-    // ----- game construction -----
-
-    private static World buildWorld(String mapId) {
-        MapPreset p = Maps.byId(mapId);
-        int cols = (int) Math.ceil(HeadlessGame.WIDTH / HeadlessGame.TILE);
-        int rows = (int) Math.ceil(HeadlessGame.HEIGHT / HeadlessGame.TILE);
-        Terrain.TileType[][] tiles = p == null ? null : p.generator().generate(cols, rows);
-        if (tiles == null) {
-            return World.battlefield(HeadlessGame.WIDTH, HeadlessGame.HEIGHT, HeadlessGame.TILE);
-        }
-        return new World(HeadlessGame.WIDTH, HeadlessGame.HEIGHT, HeadlessGame.TILE, tiles);
-    }
-
-    private static Supplier<Long> idSource() {
-        long[] seed = {-1L};
-        return () -> seed[0]--;
-    }
-
-    /**
-     * Telnet IAC negotiation filter. Strips IAC command sequences from the
-     * input (answering DO->WONT and WILL->DONT so clients stop asking) and
-     * decodes PETSCII key bytes to plain ASCII-ish codes.
-     */
-    static final class IacFilter {
-        private static final int IAC = 255;
-        private static final int WILL = 251;
-        private static final int DO = 253;
-        private static final int WONT = 252;
-        private static final int DONT = 254;
-        private static final int SB = 250;
-        private static final int SE = 240;
-
-        private static final int DATA = 0;
-        private static final int GOT_IAC = 1;
-        private static final int GOT_CMD = 2;
-        private static final int IN_SB = 3;
-        private static final int SB_IAC = 4;
-
-        private int state = DATA;
-        private int pendingCmd;
-
-        int read(InputStream in, OutputStream out) throws IOException {
-            while (true) {
-                int b = in.read();
-                if (b < 0) throw new EOFException("client disconnected");
-                int r = feed(b, out);
-                if (r >= 0) return r;
-            }
-        }
-
-        int poll(InputStream in, OutputStream out) throws IOException {
-            while (in.available() > 0) {
-                int r = feed(in.read(), out);
-                if (r >= 0) return r;
-            }
-            return -1;
-        }
-
-        private int feed(int b, OutputStream out) throws IOException {
-            switch (state) {
-                case DATA -> {
-                    if (b == IAC) {
-                        state = GOT_IAC;
-                        return -1;
-                    }
-                    return decode(b);
-                }
-                case GOT_IAC -> {
-                    if (b == IAC) {
-                        state = DATA;
-                        return IAC;
-                    }
-                    if (b == WILL || b == WONT || b == DO || b == DONT) {
-                        pendingCmd = b;
-                        state = GOT_CMD;
-                        return -1;
-                    }
-                    if (b == SB) {
-                        state = IN_SB;
-                        return -1;
-                    }
-                    state = DATA;
-                    return -1;
-                }
-                case GOT_CMD -> {
-                    state = DATA;
-                    if (pendingCmd == DO) {
-                        out.write(IAC);
-                        out.write(WONT);
-                        out.write(b);
-                        out.flush();
-                    } else if (pendingCmd == WILL) {
-                        out.write(IAC);
-                        out.write(DONT);
-                        out.write(b);
-                        out.flush();
-                    }
-                    return -1;
-                }
-                case IN_SB -> {
-                    if (b == IAC) state = SB_IAC;
-                    return -1;
-                }
-                case SB_IAC -> {
-                    state = (b == SE) ? DATA : IN_SB;
-                    return -1;
-                }
-                default -> {
-                    state = DATA;
-                    return -1;
-                }
-            }
-        }
-
-        private static int decode(int b) {
-            // Shifted letters in lowercase mode arrive as $C1-$DA.
-            if (b >= 0xC1 && b <= 0xDA) return b - 0x80;
-            // ASCII lowercase from non-C64 clients still means the letter key.
-            if (b >= 'a' && b <= 'z') return b - 32;
-            return b;
-        }
-    }
 }

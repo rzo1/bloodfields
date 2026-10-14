@@ -10,16 +10,13 @@ import com.github.rzo1.bloodfields.net.proto.BattleState;
 import com.github.rzo1.bloodfields.net.proto.Configure;
 import com.github.rzo1.bloodfields.net.proto.DeployState;
 import com.github.rzo1.bloodfields.net.proto.GameMessage;
-import com.github.rzo1.bloodfields.net.proto.Leaderboard;
 import com.github.rzo1.bloodfields.net.proto.LobbyState;
 import com.github.rzo1.bloodfields.net.proto.Phase;
 import com.github.rzo1.bloodfields.net.proto.PlayerInfo;
 import com.github.rzo1.bloodfields.net.proto.PlayerMessage;
-import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
 import com.github.rzo1.bloodfields.net.proto.RemoveUnit;
 import com.github.rzo1.bloodfields.net.proto.ResultEvent;
 import com.github.rzo1.bloodfields.net.proto.SaveGame;
-import com.github.rzo1.bloodfields.net.proto.SaveMeta;
 import com.github.rzo1.bloodfields.net.proto.SelectSkill;
 import com.github.rzo1.bloodfields.net.proto.SetReady;
 import com.github.rzo1.bloodfields.ui.Maps;
@@ -32,9 +29,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.nio.file.Path;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -51,6 +46,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class ProxySession implements Runnable {
 
     private static final long FRAME_MS = 700;
+    /** Test hook: -Dbloodfield.proxy.frameMs quickens the render cadence. */
+    private final long frameMs = Math.max(10, Long.getLong("bloodfield.proxy.frameMs", FRAME_MS));
     private static final long FLASH_NANOS = 2_500_000_000L;
     private static final long PAGE_FLIP_NANOS = 2_500_000_000L;
     private static final long IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -58,34 +55,22 @@ public final class ProxySession implements Runnable {
     private static final long CARRIER_NANOS = 5_000_000_000L;
     private static final long TERMINAL_SCREEN_MS = 2_500;
 
-    private static final int KEY_DEL = 20;
-    private static final int KEY_DOWN = 17;
-    private static final int KEY_RIGHT = 29;
-    private static final int KEY_UP = 145;
-    private static final int KEY_LEFT = 157;
-    private static final int KEY_SPACE = 32;
-
-    private static final double WORLD_W = 1280.0;
-    private static final double WORLD_H = 800.0;
-    private static final double CELL_W = WORLD_W / PetsciiScreen.COLS;
-    private static final double CELL_H = WORLD_H / PetsciiRenderer.BOARD_ROWS;
-
-    private static final char[] UNIT_KEYS = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'G'};
-    private static final UnitType[] UNIT_TYPES = {
-            UnitType.INFANTRY, UnitType.ARCHER, UnitType.CAVALRY, UnitType.MAGE,
-            UnitType.NECROMANCER, UnitType.HEALER, UnitType.CATAPULT, UnitType.ASSASSIN,
-            UnitType.GOLEM, UnitType.PIKEMAN, UnitType.GENERAL
-    };
+    // One tile is one cell: cursor and placement live in tile coordinates
+    // and the 23-row viewport scrolls over all 25 tile rows, exactly like
+    // the local renderer (no squashed 800/23 cells, no lost rows).
+    private static final double TILE = com.github.rzo1.bloodfields.cli.HeadlessGame.TILE;
     private static final int[] BUDGETS = {500, 1000, 2000, 3000, 5000};
     private static final String[] SPEED_LABELS = {">0.5X", ">1X", ">>2X", ">>>4X"};
 
     private final Socket socket;
     private final String proxyHost;
+    private final boolean proxyTls;
+    private final java.io.File proxyTrustCert;
+    private final com.github.rzo1.bloodfields.net.proto.PlayerProfile profile;
+    private final java.nio.file.Path dataDir;
     private final int proxyPort;
-    private final PlayerProfile profile;
-    private final Path dataDir;
     private final PetsciiScreen screen = new PetsciiScreen();
-    private final TelnetSession.IacFilter iac = new TelnetSession.IacFilter();
+    private final IacFilter iac = new IacFilter();
 
     private final AtomicReference<Phase> phaseRef = new AtomicReference<>();
     private final AtomicReference<LobbyState> lobbyRef = new AtomicReference<>();
@@ -93,15 +78,16 @@ public final class ProxySession implements Runnable {
     private final AtomicReference<BattleState> battleRef = new AtomicReference<>();
     private final AtomicReference<ResultEvent> resultRef = new AtomicReference<>();
     private final AtomicReference<byte[]> saveRef = new AtomicReference<>();
-    private final AtomicReference<Leaderboard> boardRef = new AtomicReference<>();
-    private final AtomicReference<List<SaveMeta>> serverSavesRef =
-            new AtomicReference<>(List.of());
+    private final AtomicReference<com.github.rzo1.bloodfields.net.proto.Leaderboard> boardRef =
+            new AtomicReference<>();
+    private volatile boolean showLeaderboard;
+    private final java.util.concurrent.atomic.AtomicBoolean parleyPending =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private final ConcurrentLinkedQueue<String> flashQueue = new ConcurrentLinkedQueue<>();
 
     private volatile GameClient client;
     private volatile boolean closed;
     private volatile boolean matchFull;
-    private volatile boolean showLeaderboard;
     private volatile long lastEventNanos;
 
     private InputStream in;
@@ -111,32 +97,41 @@ public final class ProxySession implements Runnable {
     private long flashUntilNanos;
     private long lastKeyNanos;
     private volatile boolean carrierLost;
+    private volatile boolean spectating;
 
     public ProxySession(Socket socket, String proxyHost, int proxyPort) {
-        this(socket, proxyHost, proxyPort, null, null);
+        this(socket, proxyHost, proxyPort, false, null, null, null);
+    }
+
+    public ProxySession(Socket socket, String proxyHost, int proxyPort,
+                        boolean proxyTls, java.io.File proxyTrustCert) {
+        this(socket, proxyHost, proxyPort, proxyTls, proxyTrustCert, null, null);
     }
 
     /**
-     * @param profile the server's player identity for this session; {@code null}
-     *                falls back to a synthetic per-session profile
-     * @param dataDir when non-{@code null}, this session advertises its local
-     *                saves at the handshake and mirrors server saves and match
-     *                records into local stores
+     * @param profile this session's claimed identity; {@code null} falls back
+     *                to a synthetic per-session profile
+     * @param dataDir when non-null, the session advertises its local saves at
+     *                the handshake and persists broadcasts locally
      */
     public ProxySession(Socket socket, String proxyHost, int proxyPort,
-                        PlayerProfile profile, Path dataDir) {
+                        boolean proxyTls, java.io.File proxyTrustCert,
+                        com.github.rzo1.bloodfields.net.proto.PlayerProfile profile,
+                        java.nio.file.Path dataDir) {
         this.socket = socket;
         this.proxyHost = proxyHost;
-        this.proxyPort = proxyPort;
+        this.proxyTls = proxyTls;
+        this.proxyTrustCert = proxyTrustCert;
         this.profile = profile;
         this.dataDir = dataDir;
+        this.proxyPort = proxyPort;
     }
 
     @Override
     public void run() {
         try {
             socket.setTcpNoDelay(true);
-            socket.setSoTimeout((int) FRAME_MS);
+            socket.setSoTimeout((int) frameMs);
             in = socket.getInputStream();
             out = socket.getOutputStream();
             negotiate();
@@ -150,6 +145,10 @@ public final class ProxySession implements Runnable {
                 if (p == null) {
                     sleepQuietly(100);
                     continue;
+                }
+                if (spectating) {
+                    outcome = spectateScreen();
+                    break;
                 }
                 outcome = switch (p) {
                     case LOBBY -> lobbyScreen();
@@ -188,19 +187,21 @@ public final class ProxySession implements Runnable {
         showLinking();
         GameClient c;
         try {
-            PlayerProfile joinAs = profile != null ? profile : PlayerProfile.newBuilder()
-                    .setPlayerId(UUID.randomUUID().toString())
-                    .setName(playerName())
-                    .build();
-            List<SaveMeta> advertised = List.of();
+            com.github.rzo1.bloodfields.net.proto.PlayerProfile joinAs = profile != null
+                    ? profile
+                    : com.github.rzo1.bloodfields.net.proto.PlayerProfile.newBuilder()
+                            .setPlayerId(java.util.UUID.randomUUID().toString())
+                            .setName(playerName()).build();
+            java.util.List<com.github.rzo1.bloodfields.net.proto.SaveMeta> advertised = java.util.List.of();
             if (dataDir != null) {
                 try {
-                    advertised = com.github.rzo1.bloodfields.net.SaveStore.at(dataDir).list();
-                } catch (RuntimeException ex) {
-                    advertised = List.of();
+                    advertised = com.github.rzo1.bloodfields.net.SaveStore.at(dataDir).list(20);
+                } catch (RuntimeException ignored) {
+                    advertised = java.util.List.of();
                 }
             }
-            c = GameClient.connect(proxyHost, proxyPort, joinAs, advertised);
+            c = GameClient.connect(proxyHost, proxyPort, joinAs, "", false,
+                    advertised, proxyTls, proxyTrustCert);
             if (dataDir != null) {
                 c.enableLocalStores(dataDir);
             }
@@ -218,13 +219,11 @@ public final class ProxySession implements Runnable {
         drain.setDaemon(true);
         drain.start();
         long deadline = System.currentTimeMillis() + WELCOME_TIMEOUT_MS;
-        while (c.faction() == null && !matchFull && System.currentTimeMillis() < deadline) {
+        while (c.faction() == null && !matchFull && c.streamOpen() && System.currentTimeMillis() < deadline) {
             sleepQuietly(50);
         }
         if (matchFull) {
-            showTerminalScreen("MATCH FULL - TWO GENERALS ALREADY",
-                    "THE FIELD IS TAKEN. TRY AGAIN LATER.");
-            return false;
+            return offerGallery(c);
         }
         mine = c.faction();
         if (mine == null) {
@@ -234,6 +233,105 @@ public final class ProxySession implements Runnable {
         }
         flash("YOU ARE " + mine.name());
         return true;
+    }
+
+    /**
+     * MATCH FULL is no longer a dead end on the C64 either: offer the
+     * gallery. On acceptance this session becomes a spectator — every
+     * frame rendered read-only, Q to leave.
+     */
+    private boolean offerGallery(GameClient rejected) throws IOException {
+        screen.clear((byte) ' ', Petscii.WHITE);
+        screen.center(6, "MATCH FULL", Petscii.LIGHT_RED);
+        screen.center(8, "TWO GENERALS ALREADY HOLD THE FIELD", Petscii.WHITE);
+        screen.center(11, "W - WATCH FROM THE GALLERY", Petscii.YELLOW);
+        screen.center(13, "Q - LEAVE", Petscii.GREY);
+        present();
+        while (true) {
+            int k = timedKey();
+            if (k == 'Q') {
+                showGoodbye();
+                return false;
+            }
+            if (k == 'W') {
+                break;
+            }
+            if (k != -1) {
+                lastKeyNanos = System.nanoTime();
+            }
+        }
+        rejected.close();
+        carrierLost = false;
+        matchFull = false;
+        GameClient c;
+        try {
+            com.github.rzo1.bloodfields.net.proto.PlayerProfile watchAs = profile != null
+                    ? profile
+                    : com.github.rzo1.bloodfields.net.proto.PlayerProfile.newBuilder()
+                            .setName(playerName()).build();
+            c = GameClient.connect(proxyHost, proxyPort, watchAs, "", true, null, proxyTls, proxyTrustCert);
+            if (dataDir != null) {
+                c.enableLocalStores(dataDir);
+            }
+        } catch (RuntimeException ex) {
+            c = null;
+        }
+        if (c == null) {
+            showTerminalScreen("CARRIER LOST - NO ANSWER",
+                    "NO SERVER AT " + proxyHost + ":" + proxyPort);
+            return false;
+        }
+        client = c;
+        spectating = true;
+        lastEventNanos = System.nanoTime();
+        Thread drain = new Thread(this::drainLoop, "bloodfield-proxy-drain");
+        drain.setDaemon(true);
+        drain.start();
+        long deadline = System.currentTimeMillis() + WELCOME_TIMEOUT_MS;
+        while (!c.spectator() && c.streamOpen() && System.currentTimeMillis() < deadline) {
+            sleepQuietly(50);
+        }
+        if (!c.spectator()) {
+            showTerminalScreen("GALLERY FULL", "EVEN THE CROWS HAVE NO PERCH LEFT.");
+            return false;
+        }
+        flash("SPECTATING");
+        return true;
+    }
+
+    /** Read-only render loop for gallery sessions: watch everything, command nothing. */
+    private Outcome spectateScreen() throws IOException {
+        screen.invalidate();
+        while (true) {
+            if (carrierLost) return Outcome.DEAD;
+            Phase p = phaseRef.get();
+            LobbyState lb = lobbyRef.get();
+            String hud2 = flashOr("SPECTATING - Q:OUT");
+            if (p == Phase.BATTLE || p == Phase.ENDED) {
+                BattleState st = battleRef.get();
+                if (st != null) {
+                    String hud1 = "RED " + st.getRedAlive() + " BLU " + st.getBlueAlive()
+                            + " T" + mmss(st.getSimTime())
+                            + (st.getPaused() ? " PAUSED" : "");
+                    PetsciiProxyRenderer.renderBattle(screen, lb, st, hud1, hud2);
+                }
+            } else if (p == Phase.DEPLOY) {
+                DeployState dep = deployRef.get();
+                if (dep != null && lb != null) {
+                    PetsciiProxyRenderer.renderDeployment(screen, lb, dep, Faction.RED,
+                            -1, 0, PetsciiProxyRenderer.offsetForUnits(dep.getUnitsList()),
+                            "DEPLOYMENT", hud2);
+                }
+            } else if (lb != null) {
+                PetsciiProxyRenderer.renderLobbyBoard(screen, lb);
+                PetsciiRenderer.paintHud(screen, "WAR COUNCIL", hud2, 0);
+            }
+            present();
+            int k = timedKey();
+            if (k == 'Q') {
+                return Outcome.QUIT;
+            }
+        }
     }
 
     private String playerName() {
@@ -257,10 +355,7 @@ public final class ProxySession implements Runnable {
             }
             lastEventNanos = System.nanoTime();
             switch (msg.getMsgCase()) {
-                case WELCOME -> {
-                    phaseRef.set(msg.getWelcome().getPhase());
-                    serverSavesRef.set(msg.getWelcome().getSavesList());
-                }
+                case WELCOME -> phaseRef.set(msg.getWelcome().getPhase());
                 case LOBBY -> {
                     lobbyRef.set(msg.getLobby());
                     phaseRef.set(Phase.LOBBY);
@@ -277,15 +372,23 @@ public final class ProxySession implements Runnable {
                     resultRef.set(msg.getResult());
                     phaseRef.set(Phase.ENDED);
                 }
+                case BOARD -> boardRef.set(msg.getBoard());
                 case SAVED -> {
-                    saveRef.set(msg.getSaved().getSnapshot().toByteArray());
+                    saveRef.set(!msg.getSaved().getSaveRecord().isEmpty()
+                            ? msg.getSaved().getSaveRecord().toByteArray()
+                            : msg.getSaved().getSnapshot().toByteArray());
                     flashQueue.add("GAME SAVED");
                 }
                 case RESTORED -> {
                     phaseRef.set(msg.getRestored().getPhase());
+                    parleyPending.set(false);
                     flashQueue.add("FIELD RESTORED");
                 }
-                case BOARD -> boardRef.set(msg.getBoard());
+                case RESTORE_PROPOSED -> {
+                    parleyPending.set(true);
+                    flashQueue.add("PARLEY? 7:YES 8:NO");
+                }
+                case NOTICE -> flashQueue.add(msg.getNotice().getText().toUpperCase());
                 case ERROR -> {
                     String reason = msg.getError().getReason();
                     if (reason != null && reason.contains("MATCH FULL")) {
@@ -302,24 +405,19 @@ public final class ProxySession implements Runnable {
 
     // ----- leaderboard overlay -----
 
-    /**
-     * Overlay ownership for one frame: while the leaderboard is shown every
-     * keypress just closes it (repainting the screen beneath); {@code L}
-     * opens it from any phase and requests a fresh board.
-     */
     private boolean handleLeaderboard(int k) throws IOException {
         if (showLeaderboard) {
             if (k >= 0) {
                 showLeaderboard = false;
-                screen.invalidate(); // the next game render repaints everything
+                screen.invalidate();
             } else {
                 renderLeaderboard();
             }
             return true;
         }
-        if (k == 'L' || k == 'l') {
+        if (k == 'L') {
             showLeaderboard = true;
-            client.requestLeaderboard();
+            if (client != null) client.requestLeaderboard();
             renderLeaderboard();
             return true;
         }
@@ -330,17 +428,6 @@ public final class ProxySession implements Runnable {
         String ownId = profile == null ? "" : profile.getPlayerId();
         PetsciiProxyRenderer.renderLeaderboard(screen, boardRef.get(), ownId);
         present();
-    }
-
-    private void sendRestore() {
-        byte[] snap = saveRef.get();
-        if (snap == null) {
-            flash("NO SAVE HELD");
-        } else {
-            client.send(PlayerMessage.newBuilder()
-                    .setRestore(com.github.rzo1.bloodfields.net.proto.RestoreGame.newBuilder()
-                            .setSnapshot(ByteString.copyFrom(snap))));
-        }
     }
 
     // ----- lobby -----
@@ -384,16 +471,6 @@ public final class ProxySession implements Runnable {
                     if (!ready) {
                         flash("WAITING FOR FOE");
                     }
-                } else if (k == 'F') {
-                    List<SaveMeta> serverSaves = serverSavesRef.get();
-                    if (serverSaves == null || serverSaves.isEmpty()) {
-                        flash("NO SERVER SAVES");
-                    } else {
-                        client.fetchSave(serverSaves.get(0).getSaveId());
-                        flash("FETCHING SAVE");
-                    }
-                } else if (k == '6') {
-                    sendRestore();
                 }
             }
             long now = System.nanoTime();
@@ -412,12 +489,9 @@ public final class ProxySession implements Runnable {
             PetsciiProxyRenderer.renderLobbyBoard(screen, lb);
         }
         screen.center(0, "WAR COUNCIL", Petscii.LIGHT_RED);
-        List<SaveMeta> serverSaves = serverSavesRef.get();
-        String savesLine = "SERVER SAVES: " + (serverSaves == null ? 0 : serverSaves.size());
-        if (serverSaves != null && !serverSaves.isEmpty()) {
-            savesLine = savesLine + "  F: FETCH LATEST SAVE";
-        }
-        screen.center(22, savesLine, Petscii.LIGHT_GREY);
+        int serverSaves = client == null ? 0 : client.serverSaves().size();
+        screen.center(22, "SERVER SAVES: " + serverSaves
+                + (serverSaves > 0 ? "  F: FETCH LATEST SAVE" : ""), Petscii.LIGHT_GREY);
         for (int c = 0; c < PetsciiScreen.COLS; c++) {
             screen.set(c, 23, (byte) ' ', Petscii.GREY);
             screen.set(c, 24, (byte) ' ', Petscii.GREY);
@@ -429,7 +503,7 @@ public final class ProxySession implements Runnable {
         } else if (flashShowing()) {
             line = currentFlash();
         } else if (pageB) {
-            line = mine == Faction.RED ? "M:MAP B:BUD D:DRG R:RDY Q:OUT" : "R:RDY Q:OUT";
+            line = mine == Faction.RED ? "M:MAP B:BUD D:DRG R:RDY L:BRD Q:OUT" : "R:RDY L:BRD Q:OUT";
         } else {
             String map = lb.getMapName() == null || lb.getMapName().isEmpty()
                     ? lb.getMapId() : lb.getMapName();
@@ -445,15 +519,15 @@ public final class ProxySession implements Runnable {
     }
 
     private String playersLine(LobbyState lb) {
-        String red = slotText(lb, com.github.rzo1.bloodfields.net.proto.Faction.RED);
-        String blue = slotText(lb, com.github.rzo1.bloodfields.net.proto.Faction.BLUE);
+        String red = slotText(lb, com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED);
+        String blue = slotText(lb, com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE);
         String line = red + " " + blue;
         return line.length() > PetsciiScreen.COLS - 1
                 ? line.substring(0, PetsciiScreen.COLS - 1) : line;
     }
 
     private String slotText(LobbyState lb, com.github.rzo1.bloodfields.net.proto.Faction f) {
-        String prefix = f == com.github.rzo1.bloodfields.net.proto.Faction.RED ? "R:" : "B:";
+        String prefix = f == com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED ? "R:" : "B:";
         for (PlayerInfo pi : lb.getPlayersList()) {
             if (pi.getFaction() == f) {
                 if (!pi.getConnected()) {
@@ -465,10 +539,7 @@ public final class ProxySession implements Runnable {
                     name = name.substring(0, 10);
                 }
                 sb.append(name);
-                if (pi.getSaveCount() > 0) {
-                    sb.append('(').append(pi.getSaveCount()).append(" SAVES)");
-                }
-                boolean mineHere = (f == com.github.rzo1.bloodfields.net.proto.Faction.RED)
+                boolean mineHere = (f == com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED)
                         == (mine == Faction.RED);
                 if (mineHere) {
                     sb.append('*');
@@ -517,8 +588,8 @@ public final class ProxySession implements Runnable {
     private boolean myReady(LobbyState lb) {
         com.github.rzo1.bloodfields.net.proto.Faction want =
                 mine == Faction.RED
-                        ? com.github.rzo1.bloodfields.net.proto.Faction.RED
-                        : com.github.rzo1.bloodfields.net.proto.Faction.BLUE;
+                        ? com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED
+                        : com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE;
         for (PlayerInfo pi : lb.getPlayersList()) {
             if (pi.getFaction() == want) {
                 return pi.getReady();
@@ -532,7 +603,8 @@ public final class ProxySession implements Runnable {
     private Outcome deployScreen() throws IOException {
         UnitType sel = UnitType.INFANTRY;
         int curC = PetsciiScreen.COLS / 2;
-        int curR = PetsciiRenderer.BOARD_ROWS / 2;
+        int curR = PetsciiRenderer.WORLD_ROWS / 2;
+        int offset = 0;
         while (phaseRef.get() == Phase.DEPLOY) {
             if (carrierLost) {
                 showTerminalScreen("CARRIER LOST", "THE LINE WENT DEAD.");
@@ -543,22 +615,19 @@ public final class ProxySession implements Runnable {
                 return Outcome.DEAD;
             }
             int k = timedKey();
-            if (handleLeaderboard(k)) {
-                continue;
-            }
             if (k == 'Q') {
                 return Outcome.QUIT;
             }
             DeployState dep = deployRef.get();
             if (dep != null) {
                 ZoneCursor zc = ownZone(dep);
-                if (k == KEY_UP) {
+                if (k == Petscii.KEY_UP) {
                     curR = Math.max(zc.minRow, curR - 1);
-                } else if (k == KEY_DOWN) {
+                } else if (k == Petscii.KEY_DOWN) {
                     curR = Math.min(zc.maxRow, curR + 1);
-                } else if (k == KEY_LEFT) {
+                } else if (k == Petscii.KEY_LEFT) {
                     curC = Math.max(zc.minCol, curC - 1);
-                } else if (k == KEY_RIGHT) {
+                } else if (k == Petscii.KEY_RIGHT) {
                     curC = Math.min(zc.maxCol, curC + 1);
                 } else {
                     curC = clampInt(curC, zc.minCol, zc.maxCol);
@@ -573,17 +642,17 @@ public final class ProxySession implements Runnable {
                     } else {
                         flash("DRAGONS OFF");
                     }
-                } else if (k == KEY_SPACE) {
+                } else if (k == Petscii.KEY_SPACE) {
                     client.send(PlayerMessage.newBuilder()
                             .setPlace(com.github.rzo1.bloodfields.net.proto.PlaceUnit.newBuilder()
                                     .setType(ProtoMapper.unitKind(sel))
-                                    .setX((curC + 0.5) * CELL_W)
-                                    .setY((curR + 0.5) * CELL_H)));
-                } else if (k == KEY_DEL) {
+                                    .setX((curC + 0.5) * TILE)
+                                    .setY((curR + 0.5) * TILE)));
+                } else if (k == Petscii.KEY_DEL) {
                     client.send(PlayerMessage.newBuilder()
                             .setRemove(RemoveUnit.newBuilder()
-                                    .setX((curC + 0.5) * CELL_W)
-                                    .setY((curR + 0.5) * CELL_H)));
+                                    .setX((curC + 0.5) * TILE)
+                                    .setY((curR + 0.5) * TILE)));
                 } else if (k == 'K') {
                     cycleSkill(dep);
                 } else if (k == 'S') {
@@ -591,12 +660,13 @@ public final class ProxySession implements Runnable {
                     flash("WAITING FOR FOE");
                 }
             }
-            renderDeploy(dep, sel, curC, curR);
+            offset = PetsciiRenderer.offsetForCursor(curR, offset);
+            renderDeploy(dep, sel, curC, curR, offset);
         }
         return Outcome.NEXT;
     }
 
-    private void renderDeploy(DeployState dep, UnitType sel, int curC, int curR)
+    private void renderDeploy(DeployState dep, UnitType sel, int curC, int curR, int offset)
             throws IOException {
         LobbyState lb = lobbyRef.get();
         if (dep == null || lb == null) {
@@ -626,7 +696,7 @@ public final class ProxySession implements Runnable {
             }
         }
         String hud2 = flashOr("CRSR SPC:PUT DEL:RMV K:SKL S:RDY Q:OUT");
-        PetsciiProxyRenderer.renderDeployment(screen, lb, dep, mine, curC, curR,
+        PetsciiProxyRenderer.renderDeployment(screen, lb, dep, mine, curC, curR, offset,
                 hud1.toString(), hud2);
         present();
     }
@@ -661,12 +731,12 @@ public final class ProxySession implements Runnable {
         com.github.rzo1.bloodfields.net.proto.ZoneRect z =
                 mine == Faction.RED ? dep.getRedZone() : dep.getBlueZone();
         if (z == null) {
-            return new ZoneCursor(0, PetsciiScreen.COLS - 1, 0, PetsciiRenderer.BOARD_ROWS - 1);
+            return new ZoneCursor(0, PetsciiScreen.COLS - 1, 0, PetsciiRenderer.WORLD_ROWS - 1);
         }
-        int minCol = clampInt((int) Math.ceil(z.getMinX() / CELL_W - 0.5), 0, PetsciiScreen.COLS - 1);
-        int maxCol = clampInt((int) Math.floor(z.getMaxX() / CELL_W - 0.5), 0, PetsciiScreen.COLS - 1);
-        int minRow = clampInt((int) Math.ceil(z.getMinY() / CELL_H - 0.5), 0, PetsciiRenderer.BOARD_ROWS - 1);
-        int maxRow = clampInt((int) Math.floor(z.getMaxY() / CELL_H - 0.5), 0, PetsciiRenderer.BOARD_ROWS - 1);
+        int minCol = clampInt((int) Math.ceil(z.getMinX() / TILE - 0.5), 0, PetsciiScreen.COLS - 1);
+        int maxCol = clampInt((int) Math.floor(z.getMaxX() / TILE - 0.5), 0, PetsciiScreen.COLS - 1);
+        int minRow = clampInt((int) Math.ceil(z.getMinY() / TILE - 0.5), 0, PetsciiRenderer.WORLD_ROWS - 1);
+        int maxRow = clampInt((int) Math.floor(z.getMaxY() / TILE - 0.5), 0, PetsciiRenderer.WORLD_ROWS - 1);
         return new ZoneCursor(minCol, maxCol, minRow, maxRow);
     }
 
@@ -680,11 +750,10 @@ public final class ProxySession implements Runnable {
                 return Outcome.DEAD;
             }
             int k = timedKey();
-            if (handleLeaderboard(k)) {
-                continue;
-            }
             BattleState st = battleRef.get();
-            if (k >= '1' && k <= '4') {
+            if (handleParleyKey(k)) {
+                // answered below
+            } else if (k >= '1' && k <= '4') {
                 client.send(PlayerMessage.newBuilder()
                         .setBattle(BattleControl.newBuilder()
                                 .setCommand(BattleControl.Command.SET_SPEED)
@@ -706,7 +775,14 @@ public final class ProxySession implements Runnable {
                 client.send(PlayerMessage.newBuilder()
                         .setSave(SaveGame.newBuilder().setLabel("TELNET")));
             } else if (k == '6') {
-                sendRestore();
+                byte[] snap = saveRef.get();
+                if (snap == null) {
+                    flash("NO SAVE HELD");
+                } else {
+                    client.send(PlayerMessage.newBuilder()
+                            .setRestore(com.github.rzo1.bloodfields.net.proto.RestoreGame.newBuilder()
+                                    .setSnapshot(ByteString.copyFrom(snap))));
+                }
             }
             if (st != null && System.nanoTime() - lastEventNanos > CARRIER_NANOS) {
                 showTerminalScreen("CARRIER LOST", "THE LINE WENT DEAD.");
@@ -746,18 +822,12 @@ public final class ProxySession implements Runnable {
                 return Outcome.DEAD;
             }
             int k = timedKey();
-            if (handleLeaderboard(k)) {
-                continue;
-            }
             if (k == 'Q') {
                 return Outcome.QUIT;
             }
             if (k == 'R') {
                 sendReady(true);
                 flash("WAITING FOR FOE");
-            }
-            if (k == '6') {
-                sendRestore();
             }
             renderEnded();
         }
@@ -775,7 +845,7 @@ public final class ProxySession implements Runnable {
         }
         if (r.getDraw()) {
             screen.center(6, "DRAW - TIME RUNS OUT", Petscii.YELLOW);
-        } else if (r.getWinner() == com.github.rzo1.bloodfields.net.proto.Faction.RED) {
+        } else if (r.getWinner() == com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED) {
             screen.center(6, "RED VICTORY!", Petscii.LIGHT_RED);
         } else {
             screen.center(6, "BLUE VICTORY!", Petscii.LIGHT_BLUE);
@@ -788,6 +858,17 @@ public final class ProxySession implements Runnable {
         screen.center(12, "TIME T" + mmss(r.getSimTime()), Petscii.WHITE);
         screen.center(20, flashOr("R:REMATCH Q:OUT"), Petscii.LIGHT_GREY);
         present();
+    }
+
+    /** 7 accepts a pending restore parley, 8 refuses it. */
+    private boolean handleParleyKey(int k) {
+        if (!parleyPending.get() || (k != '7' && k != '8')) return false;
+        parleyPending.set(false);
+        client.send(PlayerMessage.newBuilder()
+                .setConsentRestore(com.github.rzo1.bloodfields.net.proto.ConsentRestore.newBuilder()
+                        .setAccept(k == '7')));
+        flash(k == '7' ? "PARLEY ACCEPTED" : "PARLEY REFUSED");
+        return true;
     }
 
     // ----- outbound helpers -----
@@ -810,16 +891,7 @@ public final class ProxySession implements Runnable {
     private enum Outcome { NEXT, QUIT, DEAD }
 
     private void negotiate() throws IOException {
-        out.write(255);
-        out.write(251);
-        out.write(1);
-        out.write(255);
-        out.write(251);
-        out.write(3);
-        out.write(Petscii.CLEAR);
-        out.write(Petscii.UPPERCASE_MODE);
-        out.write(Petscii.WHITE);
-        out.flush();
+        SessionCommon.negotiate(out);
     }
 
     private void present() throws IOException {
@@ -894,19 +966,11 @@ public final class ProxySession implements Runnable {
     }
 
     private static UnitType typeForKey(int k) {
-        for (int i = 0; i < UNIT_KEYS.length; i++) {
-            if (UNIT_KEYS[i] == k) {
-                return UNIT_TYPES[i];
-            }
-        }
-        return null;
+        return SessionCommon.typeForKey(k);
     }
 
     private static String mmss(double simSeconds) {
-        long t = (long) simSeconds;
-        long m = t / 60;
-        long s = t % 60;
-        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+        return SessionCommon.mmss(simSeconds);
     }
 
     // ----- screens -----
@@ -936,7 +1000,7 @@ public final class ProxySession implements Runnable {
     private void showGoodbye() throws IOException {
         screen.clear((byte) ' ', Petscii.WHITE);
         screen.center(10, "THE CROWS WILL REMEMBER YOU.", Petscii.GREY);
-        screen.center(12, "ATA  6400", Petscii.DARK_GREY);
+        screen.center(12, "ATA  " + socket.getLocalPort(), Petscii.DARK_GREY);
         present();
     }
 }

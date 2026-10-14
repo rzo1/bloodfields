@@ -34,14 +34,18 @@ class SaveCodecTest {
     void roundTripPreservesAllFields() {
         Snapshot base = deploySnapshot(3);
         Snapshot head = deploySnapshot(7);
-        List<PlayerMessage> actions = List.of(
-                PlayerMessage.newBuilder()
-                        .setPlace(PlaceUnit.newBuilder()
-                                .setType(UnitKind.INFANTRY).setX(1).setY(2))
+        List<com.github.rzo1.bloodfields.net.proto.JournalAction> actions = List.of(
+                com.github.rzo1.bloodfields.net.proto.JournalAction.newBuilder()
+                        .setFaction(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED)
+                        .setMessage(PlayerMessage.newBuilder()
+                                .setPlace(PlaceUnit.newBuilder()
+                                        .setType(UnitKind.INFANTRY).setX(1).setY(2)))
                         .build(),
-                PlayerMessage.newBuilder()
-                        .setBattle(BattleControl.newBuilder()
-                                .setCommand(BattleControl.Command.PAUSE))
+                com.github.rzo1.bloodfields.net.proto.JournalAction.newBuilder()
+                        .setFaction(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE)
+                        .setMessage(PlayerMessage.newBuilder()
+                                .setBattle(BattleControl.newBuilder()
+                                        .setCommand(BattleControl.Command.PAUSE)))
                         .build());
         SaveRecord record = SaveCodec.fromSnapshots("save-1", "my save", "ann",
                 base, actions, head);
@@ -58,10 +62,10 @@ class SaveCodecTest {
         assertEquals(base, decoded.getBase());
         assertEquals(head, decoded.getHead());
         assertEquals(2, decoded.getActionsCount());
-        assertEquals(UnitKind.INFANTRY, decoded.getActions(0).getPlace().getType());
-        assertEquals(1, decoded.getActions(0).getPlace().getX(), 1e-9);
-        assertEquals(2, decoded.getActions(0).getPlace().getY(), 1e-9);
-        assertEquals(BattleControl.Command.PAUSE, decoded.getActions(1).getBattle().getCommand());
+        assertEquals(UnitKind.INFANTRY, decoded.getActions(0).getMessage().getPlace().getType());
+        assertEquals(1, decoded.getActions(0).getMessage().getPlace().getX(), 1e-9);
+        assertEquals(2, decoded.getActions(0).getMessage().getPlace().getY(), 1e-9);
+        assertEquals(BattleControl.Command.PAUSE, decoded.getActions(1).getMessage().getBattle().getCommand());
     }
 
     @Test

@@ -40,7 +40,8 @@ class PetsciiRendererUnitsTest {
     }
 
     private static int screenRow(double worldY) {
-        return (int) (worldY / (HeadlessGame.HEIGHT / (double) PetsciiRenderer.BOARD_ROWS));
+        // Tile-exact at the explicit offset 0 these tests render with.
+        return PetsciiRenderer.tileRow(worldY);
     }
 
     // ----- unitGlyph / unitColor: every branch -----
@@ -144,7 +145,7 @@ class PetsciiRendererUnitsTest {
         game.place(UnitType.INFANTRY, 320, 608); // live reference unit
 
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         assertEquals((byte) '.', scr.glyphAt(screenCol(640), screenRow(608)),
                 "dead unit must leave the terrain glyph");
         assertEquals((byte) 'I', scr.glyphAt(screenCol(320), screenRow(608)));
@@ -159,7 +160,7 @@ class PetsciiRendererUnitsTest {
         game.enemy().add(alive);
 
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         assertEquals((byte) 'P', scr.glyphAt(screenCol(640), screenRow(400)));
     }
 
@@ -172,13 +173,16 @@ class PetsciiRendererUnitsTest {
         game.player().add(unit(game, UnitType.GENERAL, Faction.RED, 99999, 99999));    // -> (39, 22)
 
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         assertEquals((byte) 'I', scr.glyphAt(0, 0));
         assertEquals(Petscii.LIGHT_BLUE, scr.colorAt(0, 0));
         assertEquals((byte) 'A', scr.glyphAt(39, 0));
-        assertEquals((byte) 'M', scr.glyphAt(0, PetsciiRenderer.BOARD_ROWS - 1));
-        assertEquals((byte) 'G', scr.glyphAt(PetsciiScreen.COLS - 1, PetsciiRenderer.BOARD_ROWS - 1));
-        assertEquals(Petscii.LIGHT_RED, scr.colorAt(PetsciiScreen.COLS - 1, PetsciiRenderer.BOARD_ROWS - 1));
+        // Bottom corners live in tile row 24: visible when scrolled down.
+        PetsciiScreen down = new PetsciiScreen();
+        PetsciiRenderer.renderBattle(down, game, PetsciiRenderer.maxOffset(), "", "");
+        assertEquals((byte) 'M', down.glyphAt(0, PetsciiRenderer.BOARD_ROWS - 1));
+        assertEquals((byte) 'G', down.glyphAt(PetsciiScreen.COLS - 1, PetsciiRenderer.BOARD_ROWS - 1));
+        assertEquals(Petscii.LIGHT_RED, down.colorAt(PetsciiScreen.COLS - 1, PetsciiRenderer.BOARD_ROWS - 1));
     }
 
     // ----- HUD -----
@@ -186,8 +190,8 @@ class PetsciiRendererUnitsTest {
     @Test
     void emptyHudPaintsGreySpacesAcrossRows23And24() {
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, grassGame(), "", "");
-        for (int c = 0; c < PetsciiScreen.COLS; c++) {
+        PetsciiRenderer.renderBattle(scr, grassGame(), 0, "", "");
+        for (int c = 0; c < PetsciiScreen.COLS - 1; c++) {
             assertEquals((byte) ' ', scr.glyphAt(c, 23), "row 23 col " + c);
             assertEquals(Petscii.GREY, scr.colorAt(c, 23));
             if (c < PetsciiScreen.COLS - 1) {
@@ -195,6 +199,9 @@ class PetsciiRendererUnitsTest {
                 assertEquals(Petscii.GREY, scr.colorAt(c, 24));
             }
         }
+        // The last cell of row 23 is the scroll marker: 'V' = more below.
+        assertEquals((byte) 'V', scr.glyphAt(39, 23));
+        assertEquals(Petscii.YELLOW, scr.colorAt(39, 23));
         // The bottom-right cell cannot be written at all: it keeps the
         // constructor default rather than the HUD grey.
         assertEquals(Petscii.WHITE, scr.colorAt(39, 24));
@@ -203,7 +210,7 @@ class PetsciiRendererUnitsTest {
     @Test
     void hudTextIsWhiteOnRow23AndLightGreyOnRow24() {
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, grassGame(), "R:5", "HELP");
+        PetsciiRenderer.renderBattle(scr, grassGame(), 0, "R:5", "HELP");
         assertEquals((byte) 'R', scr.glyphAt(0, 23));
         assertEquals(Petscii.WHITE, scr.colorAt(0, 23));
         assertEquals((byte) 'H', scr.glyphAt(0, 24));
@@ -220,14 +227,15 @@ class PetsciiRendererUnitsTest {
         PetsciiRenderer.renderBattle(scr, grassGame(), longHud, "");
         // Columns 0..39 receive chars 0..39; the 41st char ('E', index 40) is clipped.
         assertEquals((byte) 'A', scr.glyphAt(0, 23));
-        assertEquals((byte) 'D', scr.glyphAt(39, 23), "40th char lands in the last column");
+        assertEquals((byte) 'C', scr.glyphAt(38, 23));
+        assertEquals((byte) 'V', scr.glyphAt(39, 23), "last HUD cell is the scroll marker");
         assertEquals((byte) ' ', scr.glyphAt(0, 24), "no wrap into row 24");
     }
 
     @Test
     void nullHudKeepsGreyBlankRows() {
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, grassGame(), null, null);
+        PetsciiRenderer.renderBattle(scr, grassGame(), 0, null, null);
         assertEquals(Petscii.GREY, scr.colorAt(0, 23));
         assertEquals((byte) ' ', scr.glyphAt(0, 24));
     }
@@ -241,7 +249,7 @@ class PetsciiRendererUnitsTest {
         int c = screenCol(640);
         int r = screenRow(608);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderDeployment(scr, game, c, r, "", "");
+        PetsciiRenderer.renderDeployment(scr, game, c, r, 0, "", "");
         assertTrue(scr.rvsAt(c, r), "cursor cell must be reverse video");
         assertEquals((byte) 'I', scr.glyphAt(c, r), "unit glyph must survive the cursor");
         assertEquals(Petscii.LIGHT_RED, scr.colorAt(c, r));
@@ -251,7 +259,7 @@ class PetsciiRendererUnitsTest {
     void deploymentCursorOnGrassKeepsDotGlyph() {
         HeadlessGame game = grassGame();
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderDeployment(scr, game, 5, 6, "", "");
+        PetsciiRenderer.renderDeployment(scr, game, 5, 6, 0, "", "");
         assertTrue(scr.rvsAt(5, 6));
         assertEquals((byte) '.', scr.glyphAt(5, 6));
         assertEquals(Petscii.GREEN, scr.colorAt(5, 6));
@@ -259,22 +267,22 @@ class PetsciiRendererUnitsTest {
 
     @Test
     void zoneLineSkipsCellsCoveredByAStructure() {
-        // Zone row for the default zone (minY=400) is screen row 11. A wall
+        // Zone row for the default zone (minY=400) is tile/screen row 12. A wall
         // structure crossing that row replaces the '.' grass, so no dash.
         Structure wall = new Structure(1L, 0, 400, 96, 32, StructureType.WALL, 200.0);
         HeadlessGame game = gameWithStructures(wall);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderDeployment(scr, game, 39, 22, "", "");
-        assertEquals(Petscii.BLOCK, scr.glyphAt(0, 11), "wall cell must not be overwritten by a dash");
-        assertEquals(Petscii.GREY, scr.colorAt(0, 11));
-        assertEquals(Petscii.BLOCK, scr.glyphAt(2, 11));
-        assertEquals((byte) '-', scr.glyphAt(4, 11), "grass cell beyond the wall still gets a dash");
-        assertEquals(Petscii.LIGHT_GREEN, scr.colorAt(4, 11));
+        PetsciiRenderer.renderDeployment(scr, game, 39, 22, 0, "", "");
+        assertEquals(Petscii.BLOCK, scr.glyphAt(0, 12), "wall cell must not be overwritten by a dash");
+        assertEquals(Petscii.GREY, scr.colorAt(0, 12));
+        assertEquals(Petscii.BLOCK, scr.glyphAt(2, 12));
+        assertEquals((byte) '-', scr.glyphAt(4, 12), "grass cell beyond the wall still gets a dash");
+        assertEquals(Petscii.LIGHT_GREEN, scr.colorAt(4, 12));
     }
 
     @Test
     void zoneLineSkipsForestCells() {
-        // Screen row 11 samples tile row 12 (y=400 / 32). Forest there renders
+        // Tile row 12 (y=400 / 32) is screen row 12. Forest there renders
         // '*', which must not be overwritten by a zone dash.
         int cols = (int) (HeadlessGame.WIDTH / HeadlessGame.TILE);
         int rows = (int) (HeadlessGame.HEIGHT / HeadlessGame.TILE);
@@ -289,19 +297,19 @@ class PetsciiRendererUnitsTest {
         HeadlessGame game = HeadlessGame.fromMap(world, 1000, List.of());
 
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderDeployment(scr, game, 39, 22, "", "");
-        assertEquals((byte) '*', scr.glyphAt(10, 11), "forest glyph must survive the zone line");
-        assertEquals(Petscii.GREEN, scr.colorAt(10, 11));
-        assertEquals((byte) '-', scr.glyphAt(8, 11), "neighbouring grass cell still dashed");
+        PetsciiRenderer.renderDeployment(scr, game, 39, 22, 0, "", "");
+        assertEquals((byte) '*', scr.glyphAt(10, 12), "forest glyph must survive the zone line");
+        assertEquals(Petscii.GREEN, scr.colorAt(10, 12));
+        assertEquals((byte) '-', scr.glyphAt(8, 12), "neighbouring grass cell still dashed");
     }
 
     @Test
     void battleRenderNeverDrawsZoneDashes() {
         HeadlessGame game = grassGame();
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         for (int c = 0; c < PetsciiScreen.COLS; c += 2) {
-            assertEquals((byte) '.', scr.glyphAt(c, 11));
+            assertEquals((byte) '.', scr.glyphAt(c, 12));
         }
     }
 
@@ -312,13 +320,13 @@ class PetsciiRendererUnitsTest {
         HeadlessGame game = grassGame();
         // Spread corpses over distinct screen cells: col = i % 40, screen row = i / 40
         // (corpse i lands in exactly one cell for i = 0..249).
-        double cellH = HeadlessGame.HEIGHT / (double) PetsciiRenderer.BOARD_ROWS;
+        double cellH = HeadlessGame.TILE;
         for (int i = 0; i < 250; i++) {
             game.state().corpses.recordDeath(i, (i % 40) * 32.0 + 16.0,
                     (i / 40) * cellH + 2.0, Faction.BLUE, UnitType.INFANTRY);
         }
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         int drawn = 0;
         for (int r = 0; r < PetsciiRenderer.BOARD_ROWS; r++) {
             for (int c = 0; c < PetsciiScreen.COLS; c++) {
@@ -338,7 +346,7 @@ class PetsciiRendererUnitsTest {
         game.state().corpses.recordDeath(1L, 100, 100, Faction.BLUE, UnitType.INFANTRY);
         game.state().corpses.recordDeath(2L, 640, 400, Faction.RED, UnitType.GOLEM);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         assertEquals((byte) ',', scr.glyphAt(screenCol(100), screenRow(100)));
         assertEquals((byte) ',', scr.glyphAt(screenCol(640), screenRow(400)));
     }
@@ -351,12 +359,15 @@ class PetsciiRendererUnitsTest {
         game.state().fireField.scorchedTiles().put(FireField.key(7, 3), Boolean.TRUE);
         game.state().fireField.scorchedTiles().put(FireField.key(39, 24), Boolean.TRUE);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        // plotTile maps tile row 3 to screen row 3 * 23 / 25 = 2.
-        assertEquals((byte) ':', scr.glyphAt(7, 2));
-        assertEquals(Petscii.DARK_GREY, scr.colorAt(7, 2));
-        // Tile row 24 maps to the last board row: 24 * 23 / 25 = 22.
-        assertEquals((byte) ':', scr.glyphAt(39, PetsciiRenderer.BOARD_ROWS - 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        // Tile-exact: tile row 3 is screen row 3 at offset 0.
+        assertEquals((byte) ':', scr.glyphAt(7, 3));
+        assertEquals(Petscii.DARK_GREY, scr.colorAt(7, 3));
+        // Tile row 24 is below the 23-row viewport at offset 0; scrolled
+        // fully down it lands on the last board row. No row is lost.
+        PetsciiScreen scrolled = new PetsciiScreen();
+        PetsciiRenderer.renderBattle(scrolled, game, PetsciiRenderer.maxOffset(), "", "");
+        assertEquals((byte) ':', scrolled.glyphAt(39, PetsciiRenderer.BOARD_ROWS - 1));
     }
 
     @Test
@@ -366,7 +377,7 @@ class PetsciiRendererUnitsTest {
         game.state().fireField.scorchedTiles().put(FireField.key(-1, 5), Boolean.TRUE);
         game.state().fireField.activeFires().put(FireField.key(0, 40), 5.0);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         for (int r = 0; r < PetsciiRenderer.BOARD_ROWS; r++) {
             for (int c = 0; c < PetsciiScreen.COLS; c++) {
                 assertTrue(scr.glyphAt(c, r) != (byte) ':'
@@ -383,19 +394,19 @@ class PetsciiRendererUnitsTest {
 
         game.state().tick = 0;
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '*', scr.glyphAt(4, 7));
-        assertEquals(Petscii.YELLOW, scr.colorAt(4, 7));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '*', scr.glyphAt(4, 8));
+        assertEquals(Petscii.YELLOW, scr.colorAt(4, 8));
 
         game.state().tick = 8;
         PetsciiScreen scr2 = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr2, game, "", "");
-        assertEquals(Petscii.LIGHT_RED, scr2.colorAt(4, 7));
+        PetsciiRenderer.renderBattle(scr2, game, 0, "", "");
+        assertEquals(Petscii.LIGHT_RED, scr2.colorAt(4, 8));
 
         game.state().tick = 16;
         PetsciiScreen scr3 = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr3, game, "", "");
-        assertEquals(Petscii.YELLOW, scr3.colorAt(4, 7));
+        PetsciiRenderer.renderBattle(scr3, game, 0, "", "");
+        assertEquals(Petscii.YELLOW, scr3.colorAt(4, 8));
     }
 
     @Test
@@ -404,9 +415,9 @@ class PetsciiRendererUnitsTest {
         game.state().fireField.scorchedTiles().put(FireField.key(9, 9), Boolean.TRUE);
         game.state().fireField.activeFires().put(FireField.key(9, 9), 3.0);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '*', scr.glyphAt(9, 8));
-        assertEquals(Petscii.YELLOW, scr.colorAt(9, 8));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '*', scr.glyphAt(9, 9));
+        assertEquals(Petscii.YELLOW, scr.colorAt(9, 9));
     }
 
     // ----- projectiles -----
@@ -417,9 +428,9 @@ class PetsciiRendererUnitsTest {
         game.state().projectiles.add(new Projectile(64, 32, 0, 0,
                 Faction.BLUE, 30, null, 45.0, UnitType.DRAGON));
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '*', scr.glyphAt(2, 0));
-        assertEquals(Petscii.ORANGE, scr.colorAt(2, 0));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '*', scr.glyphAt(2, 1));
+        assertEquals(Petscii.ORANGE, scr.colorAt(2, 1));
     }
 
     @Test
@@ -428,9 +439,9 @@ class PetsciiRendererUnitsTest {
         game.state().projectiles.add(new Projectile(96, 32, 0, 0,
                 Faction.RED, 18, null, 50.0, UnitType.MAGE));
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '*', scr.glyphAt(3, 0));
-        assertEquals(Petscii.ORANGE, scr.colorAt(3, 0));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '*', scr.glyphAt(3, 1));
+        assertEquals(Petscii.ORANGE, scr.colorAt(3, 1));
     }
 
     @Test
@@ -439,9 +450,9 @@ class PetsciiRendererUnitsTest {
         game.state().projectiles.add(new Projectile(64, 64, 0, 0,
                 Faction.RED, 8, null, 0, UnitType.INFANTRY));
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '\'', scr.glyphAt(2, 1));
-        assertEquals(Petscii.WHITE, scr.colorAt(2, 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '\'', scr.glyphAt(2, 2));
+        assertEquals(Petscii.WHITE, scr.colorAt(2, 2));
     }
 
     @Test
@@ -450,9 +461,9 @@ class PetsciiRendererUnitsTest {
         game.state().projectiles.add(new Projectile(64, 64, 0, 0,
                 Faction.RED, 35, null, 70.0, UnitType.CATAPULT));
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) 'O', scr.glyphAt(2, 1));
-        assertEquals(Petscii.LIGHT_GREY, scr.colorAt(2, 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) 'O', scr.glyphAt(2, 2));
+        assertEquals(Petscii.LIGHT_GREY, scr.colorAt(2, 2));
     }
 
     @Test
@@ -463,8 +474,8 @@ class PetsciiRendererUnitsTest {
         spent.alive = false;
         game.state().projectiles.add(spent);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '.', scr.glyphAt(2, 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '.', scr.glyphAt(2, 2));
     }
 
     // ----- structures -----
@@ -474,9 +485,9 @@ class PetsciiRendererUnitsTest {
         Structure tower = new Structure(1L, 64, 64, 32, 32, StructureType.TOWER, 300.0);
         HeadlessGame game = gameWithStructures(tower);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) 'T', scr.glyphAt(2, 1));
-        assertEquals(Petscii.LIGHT_GREY, scr.colorAt(2, 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) 'T', scr.glyphAt(2, 2));
+        assertEquals(Petscii.LIGHT_GREY, scr.colorAt(2, 2));
     }
 
     @Test
@@ -484,9 +495,9 @@ class PetsciiRendererUnitsTest {
         Structure wall = new Structure(1L, 64, 64, 32, 32, StructureType.WALL, 200.0);
         HeadlessGame game = gameWithStructures(wall);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals(Petscii.BLOCK, scr.glyphAt(2, 1));
-        assertEquals(Petscii.GREY, scr.colorAt(2, 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals(Petscii.BLOCK, scr.glyphAt(2, 2));
+        assertEquals(Petscii.GREY, scr.colorAt(2, 2));
     }
 
     @Test
@@ -494,9 +505,9 @@ class PetsciiRendererUnitsTest {
         Structure gate = new Structure(1L, 192, 64, 32, 32, StructureType.GATE, 100.0);
         HeadlessGame game = gameWithStructures(gate);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '=', scr.glyphAt(6, 1));
-        assertEquals(Petscii.BROWN, scr.colorAt(6, 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '=', scr.glyphAt(6, 2));
+        assertEquals(Petscii.BROWN, scr.colorAt(6, 2));
     }
 
     @Test
@@ -505,9 +516,9 @@ class PetsciiRendererUnitsTest {
         HeadlessGame game = gameWithStructures(gate);
         game.state().structures.setGateOpen(gate, true);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '-', scr.glyphAt(6, 1));
-        assertEquals(Petscii.BROWN, scr.colorAt(6, 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '-', scr.glyphAt(6, 2));
+        assertEquals(Petscii.BROWN, scr.colorAt(6, 2));
     }
 
     @Test
@@ -517,9 +528,9 @@ class PetsciiRendererUnitsTest {
         game.state().structures.damage(gate, 9999.0);
         assertTrue(game.state().structures.isDestroyed(gate));
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) ':', scr.glyphAt(6, 1));
-        assertEquals(Petscii.DARK_GREY, scr.colorAt(6, 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) ':', scr.glyphAt(6, 2));
+        assertEquals(Petscii.DARK_GREY, scr.colorAt(6, 2));
     }
 
     @Test
@@ -528,8 +539,8 @@ class PetsciiRendererUnitsTest {
         HeadlessGame game = gameWithStructures(tower);
         game.state().structures.damage(tower, 9999.0);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) '.', scr.glyphAt(2, 1), "destroyed non-gate structures leave the list; grass shows");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        assertEquals((byte) '.', scr.glyphAt(2, 2), "destroyed non-gate structures leave the list; grass shows");
     }
 
     @Test
@@ -538,9 +549,11 @@ class PetsciiRendererUnitsTest {
         Structure near = new Structure(2L, -500, -500, 32, 32, StructureType.TOWER, 300.0);
         HeadlessGame game = gameWithStructures(far, near);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        assertEquals((byte) 'T', scr.glyphAt(PetsciiScreen.COLS - 1, PetsciiRenderer.BOARD_ROWS - 1));
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         assertEquals((byte) 'T', scr.glyphAt(0, 0));
+        PetsciiScreen down = new PetsciiScreen();
+        PetsciiRenderer.renderBattle(down, game, PetsciiRenderer.maxOffset(), "", "");
+        assertEquals((byte) 'T', down.glyphAt(PetsciiScreen.COLS - 1, PetsciiRenderer.BOARD_ROWS - 1));
     }
 
     // ----- null world -----
@@ -549,15 +562,15 @@ class PetsciiRendererUnitsTest {
     void nullWorldRendersAsAllGrass() {
         HeadlessGame game = HeadlessGame.fromMap(null, 1000, List.of());
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         for (int c = 0; c < PetsciiScreen.COLS; c++) {
             assertEquals((byte) '.', scr.glyphAt(c, 0));
             assertEquals(Petscii.GREEN, scr.colorAt(c, 0));
         }
-        // Scorch/fire tile math falls back to a 25-row world.
+        // Scorch/fire tiles are plotted tile-exactly; row 24 needs a scroll.
         game.state().fireField.scorchedTiles().put(FireField.key(3, 24), Boolean.TRUE);
         PetsciiScreen scr2 = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr2, game, "", "");
+        PetsciiRenderer.renderBattle(scr2, game, PetsciiRenderer.maxOffset(), "", "");
         assertEquals((byte) ':', scr2.glyphAt(3, 22));
     }
 
@@ -567,17 +580,16 @@ class PetsciiRendererUnitsTest {
     void unitGlyphWinsOverCorpseFireAndProjectileAtTheSameCell() {
         HeadlessGame game = grassGame();
         double x = 64 + 0.5 * 32; // screen col 2
-        double y = 3 * (HeadlessGame.HEIGHT / (double) PetsciiRenderer.BOARD_ROWS) + 1;
+        double y = 3 * HeadlessGame.TILE + 16; // centre of tile row 3
         game.state().corpses.recordDeath(1L, x, y, Faction.BLUE, UnitType.INFANTRY);
-        // Tile row 4 maps to screen row 4 * 23 / 25 = 3.
-        game.state().fireField.activeFires().put(FireField.key(2, 4), 4.0);
+        game.state().fireField.activeFires().put(FireField.key(2, 3), 4.0);
         game.state().projectiles.add(new Projectile(x, y, 0, 0,
                 Faction.RED, 5, null, 0, UnitType.INFANTRY));
         Unit u = unit(game, UnitType.ASSASSIN, Faction.RED, x, y);
         game.player().add(u);
 
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
         assertEquals((byte) 'X', scr.glyphAt(2, 3), "units paint last and win the cell");
     }
 
@@ -587,8 +599,8 @@ class PetsciiRendererUnitsTest {
         game.state().fireField.scorchedTiles().put(FireField.key(12, 10), Boolean.TRUE);
         game.state().fireField.activeFires().put(FireField.key(12, 10), 4.0);
         PetsciiScreen scr = new PetsciiScreen();
-        PetsciiRenderer.renderBattle(scr, game, "", "");
-        int fireRow = 10 * PetsciiRenderer.BOARD_ROWS / 25;
+        PetsciiRenderer.renderBattle(scr, game, 0, "", "");
+        int fireRow = 10; // tile row == screen row at offset 0
         assertEquals((byte) '*', scr.glyphAt(12, fireRow));
     }
 }

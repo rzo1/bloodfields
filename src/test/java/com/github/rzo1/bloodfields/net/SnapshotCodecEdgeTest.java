@@ -422,7 +422,7 @@ class SnapshotCodecEdgeTest {
 
         Snapshot snap = SnapshotCodec.capture(game, new MatchConfig("fortress_wall", 1000, false),
                 Phase.ENDED);
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.BLUE, snap.getWinner());
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE, snap.getWinner());
 
         HeadlessGame g2 = SnapshotCodec.restore(snap);
         assertEquals(GameState.Phase.RESULT, g2.state().phase);
@@ -452,7 +452,7 @@ class SnapshotCodecEdgeTest {
     }
 
     @Test
-    void unknownMapIdRestoresToOpenBattlefield() {
+    void unknownMapIdIsRejectedNotSilentlySubstituted() {
         HeadlessGame game = fortressGame();
         game.place(Faction.RED, UnitType.INFANTRY, 100, 700);
         Snapshot snap = Snapshot.newBuilder()
@@ -466,11 +466,12 @@ class SnapshotCodecEdgeTest {
                         .build())
                 .build();
 
-        HeadlessGame g2 = SnapshotCodec.restore(snap);
-        assertNotNull(g2.state().world);
-        assertEquals(GameState.Phase.DEPLOYMENT, g2.state().phase);
-        HeadlessGame.PlaceResult r = g2.place(Faction.RED, UnitType.ARCHER, 300, 720);
-        assertTrue(r.success, "fallback battlefield stays deployable");
+        // A snapshot naming a map this server does not know is rejected:
+        // silently substituting an open battlefield would rewrite the
+        // restored match (and is how forged configs used to slip in).
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> SnapshotCodec.restore(snap));
+        assertTrue(ex.getMessage().contains("unknown map"), ex.getMessage());
     }
 
     @Test

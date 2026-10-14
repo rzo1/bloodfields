@@ -96,26 +96,31 @@ class TelnetServerLifecycleTest {
 
         server.close();
         // The accept thread must exit: await() returns instead of hanging.
-        long deadline = System.currentTimeMillis() + 10_000;
         Thread awaiting = new Thread(server::await);
         awaiting.setDaemon(true);
         awaiting.start();
-        awaiting.join(deadline);
+        awaiting.join(10_000); // relative duration, not an epoch timestamp
         assertTrue(!awaiting.isAlive(), "await() must return once the server is closed");
 
         // The connected client must see its socket shut down.
         InputStream in = client.getInputStream();
+        boolean sawEof = false;
         long eofDeadline = System.currentTimeMillis() + 10_000;
         while (System.currentTimeMillis() < eofDeadline) {
             try {
                 if (in.read() < 0) {
+                    sawEof = true;
                     break;
                 }
             } catch (SocketTimeoutException tick) {
                 // keep polling
+            } catch (java.io.IOException reset) {
+                sawEof = true; // a reset is also the server hanging up
+                break;
             }
         }
         client.close();
+        assertTrue(sawEof, "closing the server must disconnect connected clients");
     }
 
     @Test

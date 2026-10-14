@@ -25,7 +25,7 @@ import com.github.rzo1.bloodfields.net.proto.Tile;
 import com.github.rzo1.bloodfields.net.proto.UnitInfo;
 import com.github.rzo1.bloodfields.net.proto.UnitKind;
 import com.github.rzo1.bloodfields.net.proto.ZoneRect;
-import com.github.rzo1.bloodfields.telnet.BattleDriver;
+import com.github.rzo1.bloodfields.engine.BattleDriver;
 import com.github.rzo1.bloodfields.ui.MapPreset;
 import com.github.rzo1.bloodfields.ui.MapStructures;
 import com.github.rzo1.bloodfields.ui.Maps;
@@ -62,16 +62,16 @@ public final class ProtoMapper {
     }
 
     public static Faction faction(com.github.rzo1.bloodfields.net.proto.Faction f) {
-        if (f == com.github.rzo1.bloodfields.net.proto.Faction.RED) return Faction.RED;
-        if (f == com.github.rzo1.bloodfields.net.proto.Faction.BLUE) return Faction.BLUE;
+        if (f == com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED) return Faction.RED;
+        if (f == com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE) return Faction.BLUE;
         return null;
     }
 
     public static com.github.rzo1.bloodfields.net.proto.Faction factionKind(Faction f) {
         if (f == null) return com.github.rzo1.bloodfields.net.proto.Faction.FACTION_UNSPECIFIED;
         return f == Faction.RED
-                ? com.github.rzo1.bloodfields.net.proto.Faction.RED
-                : com.github.rzo1.bloodfields.net.proto.Faction.BLUE;
+                ? com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED
+                : com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE;
     }
 
     public static StructureType structureType(StructureKind k) {
@@ -190,9 +190,8 @@ public final class ProtoMapper {
                 .setBudget(cfg.budget())
                 .setDragons(cfg.dragons())
                 .addAllTerrainRows(terrainRows(world));
-        long[] idSeed = {-1L};
         for (Structure s : MapStructures.forPreset(cfg.mapId(),
-                HeadlessGame.WIDTH, HeadlessGame.HEIGHT, () -> idSeed[0]--)) {
+                HeadlessGame.WIDTH, HeadlessGame.HEIGHT, HeadlessGame.structureIdSource())) {
             b.addStructures(toStructureInfo(s, null));
         }
         return b.build();

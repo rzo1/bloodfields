@@ -1,5 +1,7 @@
 package com.github.rzo1.bloodfields.cli;
 
+import com.github.rzo1.bloodfields.util.Json;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -132,7 +134,7 @@ class CliMainMeshTest {
         LeaderboardStore store = server.leaderboardStore();
         store.add(MatchRecord.newBuilder()
                 .setMatchId("srv-1")
-                .setEndedEpochMs(1000L)
+                .setEndedEpochMs(1700000001000L)
                 .setRed(PlayerProfile.newBuilder().setPlayerId("p1").setName("ann"))
                 .setBlue(PlayerProfile.newBuilder().setPlayerId("p2").setName("bob"))
                 .setWinnerId("p1")

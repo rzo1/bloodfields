@@ -9,10 +9,16 @@ import com.github.rzo1.bloodfields.engine.World;
 import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.HeroSkill;
+import com.github.rzo1.bloodfields.model.Terrain;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitType;
+import com.github.rzo1.bloodfields.ui.Level;
+import com.github.rzo1.bloodfields.ui.MapPreset;
+import com.github.rzo1.bloodfields.ui.MapStructures;
+import com.github.rzo1.bloodfields.ui.Maps;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 public final class HeadlessGame {
 
@@ -51,6 +57,43 @@ public final class HeadlessGame {
         return new HeadlessGame(state, loop, z);
     }
 
+    // ----- shared construction (single home for CLI + telnet frontends) -----
+
+    /** Builds the tile world for a map preset id, or a default battlefield. */
+    public static World buildWorld(String mapId) {
+        MapPreset p = Maps.byId(mapId);
+        int cols = (int) Math.ceil((double) WIDTH / TILE);
+        int rows = (int) Math.ceil((double) HEIGHT / TILE);
+        Terrain.TileType[][] tiles =
+                (p == null) ? null : p.generator().generate(cols, rows);
+        if (tiles == null) {
+            return World.battlefield(WIDTH, HEIGHT, TILE);
+        }
+        return new World(WIDTH, HEIGHT, TILE, tiles);
+    }
+
+    /** Negative, decreasing ids for preset structures (never collide with units). */
+    public static Supplier<Long> structureIdSource() {
+        long[] seed = {-1L};
+        return () -> seed[0]--;
+    }
+
+    /** A deployable game on a map preset with its preset structures. */
+    public static HeadlessGame forMap(String mapId, int playerBudget) {
+        return fromMap(buildWorld(mapId), playerBudget,
+                MapStructures.forPreset(mapId, WIDTH, HEIGHT, structureIdSource()));
+    }
+
+    /** A campaign level: map, structures, player caps, and the spawned enemy. */
+    public static HeadlessGame forLevel(Level level) {
+        HeadlessGame game = forMap(level.mapId(), level.playerBudget());
+        for (var e : level.playerCaps().entrySet()) {
+            game.setPlayerCap(e.getKey(), e.getValue());
+        }
+        level.spawner().spawn(game.enemy(), game.state(), WIDTH, HEIGHT);
+        return game;
+    }
+
     public GameState state() { return state; }
     public GameLoop loop() { return loop; }
     public Army player() { return state.armyOf(PLAYER_FACTION); }
@@ -60,9 +103,15 @@ public final class HeadlessGame {
 
     public void setSimTime(double t) { this.simTime = t; }
 
+    private static final ZoneRect BLUE_ZONE = new ZoneRect(0.0, 0.0, WIDTH, HEIGHT / 2.0);
+
+    /**
+     * Deployment zone per faction: RED the bottom half, BLUE the top. Both
+     * rects meet at the midline y = HEIGHT/2; {@link #place} assigns that
+     * shared tile row to RED alone (see there).
+     */
     public ZoneRect zoneFor(Faction f) {
-        if (f == Faction.BLUE) return new ZoneRect(0.0, 0.0, WIDTH, HEIGHT / 2.0);
-        return zone;
+        return f == Faction.BLUE ? BLUE_ZONE : zone;
     }
 
     public void setPlayerCap(UnitType type, int max) {
@@ -103,7 +152,9 @@ public final class HeadlessGame {
         double[] snapped = snap(x, y);
         double sx = snapped[0];
         double sy = snapped[1];
-        if (!z.contains(sx, sy)) {
+        // The midline tile row (centre y == HEIGHT/2) lies in both rects;
+        // it belongs to RED, so BLUE may not deploy on it.
+        if (!z.contains(sx, sy) || (f == Faction.BLUE && sy >= HEIGHT / 2.0)) {
             return PlaceResult.fail("outside deployment zone");
         }
         if (state.world != null && !state.world.passableAt(sx, sy)) {
@@ -150,9 +201,19 @@ public final class HeadlessGame {
     }
 
     public void stepTicks(int ticks, double dtPerTick) {
+        stepTicks(ticks, dtPerTick, null);
+    }
+
+    /**
+     * Steps up to {@code ticks} ticks (stopping early on a winner), running
+     * {@code afterEachTick} after every tick so per-tick observers (corpse
+     * tracking, network snapshots) never miss an event inside a batch.
+     */
+    public void stepTicks(int ticks, double dtPerTick, Runnable afterEachTick) {
         for (int i = 0; i < ticks; i++) {
             if (winner() != null) break;
             step(dtPerTick);
+            if (afterEachTick != null) afterEachTick.run();
         }
     }
 

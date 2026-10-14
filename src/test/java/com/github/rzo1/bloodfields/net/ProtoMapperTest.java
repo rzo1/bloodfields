@@ -49,10 +49,10 @@ class ProtoMapperTest {
         assertEquals(Skill.SKILL_UNSPECIFIED, ProtoMapper.skillKind(null));
         assertEquals(Skill.VAMPIRIC_BANNER, ProtoMapper.skillKind(HeroSkill.VAMPIRIC_BANNER));
         assertNull(ProtoMapper.faction(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_UNSPECIFIED));
-        assertEquals(Faction.BLUE, ProtoMapper.faction(com.github.rzo1.bloodfields.net.proto.Faction.BLUE));
+        assertEquals(Faction.BLUE, ProtoMapper.faction(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE));
         assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_UNSPECIFIED,
                 ProtoMapper.factionKind(null));
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.RED,
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED,
                 ProtoMapper.factionKind(Faction.RED));
         assertNull(ProtoMapper.structureType(StructureKind.STRUCTURE_UNSPECIFIED));
         assertEquals(com.github.rzo1.bloodfields.engine.StructureType.TOWER,
@@ -71,7 +71,7 @@ class ProtoMapperTest {
         UnitInfo info = ProtoMapper.toUnitInfo(u);
         assertEquals(7, info.getId());
         assertEquals(UnitKind.MAGE, info.getType());
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.BLUE, info.getFaction());
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE, info.getFaction());
         assertEquals(31.5, info.getHp(), 1e-9);
         assertEquals(u.maxHp, info.getMaxHp(), 1e-9);
         assertTrue(info.getBurning());

@@ -1,27 +1,39 @@
 package com.github.rzo1.bloodfields.cli;
 
+import com.github.rzo1.bloodfields.util.Json;
+
 import com.github.rzo1.bloodfields.engine.ReplayPlayer;
 import com.github.rzo1.bloodfields.engine.Structure;
 import com.github.rzo1.bloodfields.engine.World;
 import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.HeroSkill;
-import com.github.rzo1.bloodfields.model.Terrain;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitType;
-import com.github.rzo1.bloodfields.net.MeshClient;
-import com.github.rzo1.bloodfields.net.ProfileStore;
-import com.github.rzo1.bloodfields.net.SaveStore;
-import com.github.rzo1.bloodfields.net.proto.Leaderboard;
-import com.github.rzo1.bloodfields.net.proto.LeaderboardEntry;
-import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
-import com.github.rzo1.bloodfields.net.proto.SaveMeta;
 import com.github.rzo1.bloodfields.ui.Level;
 import com.github.rzo1.bloodfields.ui.LevelCodes;
 import com.github.rzo1.bloodfields.ui.Levels;
 import com.github.rzo1.bloodfields.ui.MapPreset;
-import com.github.rzo1.bloodfields.ui.MapStructures;
 import com.github.rzo1.bloodfields.ui.Maps;
+import com.github.rzo1.bloodfields.telnet.TelnetServer;
+import com.github.rzo1.bloodfields.net.GrpcMatchServer;
+import com.github.rzo1.bloodfields.net.DataDirs;
+import com.github.rzo1.bloodfields.net.LeaderboardStore;
+import com.github.rzo1.bloodfields.net.MeshClient;
+import com.github.rzo1.bloodfields.net.MeshTrust;
+import com.github.rzo1.bloodfields.net.ProfileStore;
+import com.github.rzo1.bloodfields.net.SaveCodec;
+import com.github.rzo1.bloodfields.net.SaveStore;
+import com.github.rzo1.bloodfields.net.SnapshotSigner;
+import com.github.rzo1.bloodfields.net.proto.Leaderboard;
+import com.github.rzo1.bloodfields.net.proto.LeaderboardEntry;
+import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
+import com.github.rzo1.bloodfields.net.proto.SaveMeta;
+
+import java.nio.file.Path;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -98,23 +110,36 @@ public final class CliMain {
         out.println("    --max-ticks=N       Max ticks (default " + DEFAULT_MAX_TICKS + ").");
         out.println("  telnet                Start the Commodore 64 PETSCII telnet server.");
         out.println("    --port=N            Listen port (default "
-                + com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_PORT + ").");
+                + TelnetServer.DEFAULT_PORT + ").");
         out.println("    --sessions=N        Max concurrent sessions (default "
-                + com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_MAX_SESSIONS + ").");
+                + TelnetServer.DEFAULT_MAX_SESSIONS + ").");
+        out.println("    --bind=ADDR         Bind address (default " + TelnetServer.DEFAULT_BIND
+                + "; use 0.0.0.0 on a trusted LAN for real C64 hardware).");
         out.println("    --proxy=host:port   Bridge telnet sessions into a remote 2-player gRPC");
         out.println("                        match as player seats (run 'grpc-server' there).");
-        out.println("    --name=NAME         Player name for proxied sessions (profile id stays");
-        out.println("                        the machine's; concurrent sessions get -2, -3...).");
-        out.println("  grpc-server           Start the 2-player gRPC match server.");
-        out.println("    --port=N            Listen port (default "
-                + com.github.rzo1.bloodfields.net.GrpcMatchServer.DEFAULT_PORT + ").");
+        out.println("    --proxy-tls[=pem]   Dial the match over TLS (optional trust PEM to pin).");
+        out.println("    --name=NAME         Player name for proxied sessions.");
         out.println("    --data-dir=DIR      Saves/records/profile directory (default ~/.bloodfield).");
         out.println("  profile [--name=NAME] [--data-dir=DIR]");
         out.println("                        Show this player's profile as JSON; --name updates it.");
-        out.println("  saves [--data-dir=DIR]");
-        out.println("                        List local saves as a JSON array.");
-        out.println("  mesh --peer=host:port [--data-dir=DIR]");
-        out.println("                        Sync match records and leaderboards with a peer.");
+        out.println("  saves [--data-dir=DIR] [--verify]");
+        out.println("                        List local saves as JSON; --verify audits each");
+        out.println("                        save's action queue (base + actions == head).");
+        out.println("  mesh --peer=host:port [--data-dir=DIR] [--mesh-secret=S | --mesh-open] [--peer-tls[=pem]]");
+        out.println("                        Union of kingdoms: merge leaderboards with a peer");
+        out.println("                        node and print the joined board as JSON.");
+        out.println("  grpc-server           Start the 2-player gRPC match server.");
+        out.println("    --port=N            Listen port (default "
+                + GrpcMatchServer.DEFAULT_PORT + ").");
+        out.println("    --bind=ADDR         Bind address (default 127.0.0.1; 0.0.0.0 serves the LAN).");
+        out.println("    --tls=cert:key      PEM cert+key: require TLS (see README).");
+        out.println("    --data-dir=DIR      Saves/records/profile directory (default ~/.bloodfield).");
+        out.println("    --mesh-secret=S     Open the mesh gate under a sealed concordat:");
+        out.println("                        only records signed with this secret merge.");
+        out.println("    --mesh-open         Open court: mesh accepts unsigned records");
+        out.println("                        (trust-everyone toy mode; trusted networks only).");
+        out.println("    --snapshot-key=S    Stable seal key so restores survive restarts");
+        out.println("                        (or env BLOODFIELD_SNAPSHOT_KEY).");
         out.println("  help                  This message.");
         out.println();
         out.println("Play commands (one JSON object per line):");
@@ -166,14 +191,7 @@ public final class CliMain {
             return 2;
         }
         Level lv = Levels.all().get(idx);
-        World world = buildWorld(lv.mapId());
-        HeadlessGame game = HeadlessGame.fromMap(world, lv.playerBudget(),
-                MapStructures.forPreset(lv.mapId(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT, idSource()));
-        // Apply caps and spawn enemy via the level's spawner.
-        for (Map.Entry<UnitType, Integer> e : lv.playerCaps().entrySet()) {
-            game.setPlayerCap(e.getKey(), e.getValue());
-        }
-        lv.spawner().spawn(game.enemy(), game.state(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT);
+        HeadlessGame game = HeadlessGame.forLevel(lv);
 
         Json.Arr enemies = Json.arr();
         for (Unit u : game.enemy().units()) {
@@ -259,7 +277,7 @@ public final class CliMain {
             err.println("Unknown map: " + args[1]);
             return 2;
         }
-        World world = buildWorld(p.id());
+        World world = HeadlessGame.buildWorld(p.id());
         Json.Obj root = Json.obj()
                 .str("id", p.id())
                 .str("name", p.name())
@@ -558,10 +576,14 @@ public final class CliMain {
     // ----- telnet -----
 
     private static int telnet(String[] args, PrintStream out, PrintStream err) {
-        int port = com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_PORT;
-        int maxSessions = com.github.rzo1.bloodfields.telnet.TelnetServer.DEFAULT_MAX_SESSIONS;
+        int port = TelnetServer.DEFAULT_PORT;
+        int maxSessions = TelnetServer.DEFAULT_MAX_SESSIONS;
+        InetAddress bind = null;
         String proxy = null;
-        String name = null;
+        boolean proxyTls = false;
+        java.io.File proxyTrust = null;
+        String playerName = null;
+        Path dataDir = DataDirs.defaultDir();
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--port=")) {
@@ -571,6 +593,13 @@ public final class CliMain {
                     err.println("Bad --port: " + a);
                     return 2;
                 }
+            } else if (a.startsWith("--bind=")) {
+                try {
+                    bind = InetAddress.getByName(a.substring(7));
+                } catch (UnknownHostException uhe) {
+                    err.println("Bad --bind: " + a);
+                    return 2;
+                }
             } else if (a.startsWith("--sessions=")) {
                 try {
                     maxSessions = Integer.parseInt(a.substring(11));
@@ -578,16 +607,27 @@ public final class CliMain {
                     err.println("Bad --sessions: " + a);
                     return 2;
                 }
+            } else if (a.equals("--proxy-tls")) {
+                proxyTls = true;
+            } else if (a.startsWith("--proxy-tls=")) {
+                proxyTls = true;
+                proxyTrust = new java.io.File(a.substring(12));
+                if (!proxyTrust.isFile()) {
+                    err.println("Bad --proxy-tls (trust file not found): " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--name=")) {
+                playerName = a.substring(7);
+            } else if (a.startsWith("--data-dir=")) {
+                if (a.substring(11).isEmpty()) {
+                    err.println("Bad --data-dir: " + a);
+                    return 2;
+                }
+                dataDir = Path.of(a.substring(11));
             } else if (a.startsWith("--proxy=")) {
                 proxy = a.substring(8);
                 if (proxy.isEmpty()) {
                     err.println("Bad --proxy: " + a);
-                    return 2;
-                }
-            } else if (a.startsWith("--name=")) {
-                name = a.substring(7);
-                if (name.isBlank()) {
-                    err.println("Bad --name: " + a);
                     return 2;
                 }
             } else {
@@ -601,17 +641,17 @@ public final class CliMain {
             int colon = proxy.lastIndexOf(':');
             if (colon <= 0 || colon == proxy.length() - 1) {
                 err.println("Bad --proxy (expected host:port): " + proxy);
-                return 1;
+                return 2;
             }
             try {
                 proxyPort = Integer.parseInt(proxy.substring(colon + 1));
             } catch (NumberFormatException nfe) {
                 err.println("Bad --proxy (expected host:port): " + proxy);
-                return 1;
+                return 2;
             }
             if (proxyPort < 1 || proxyPort > 65535) {
                 err.println("Bad --proxy (expected host:port): " + proxy);
-                return 1;
+                return 2;
             }
             proxyHost = proxy.substring(0, colon);
         }
@@ -623,18 +663,26 @@ public final class CliMain {
             err.println("Bad --sessions: " + maxSessions);
             return 2;
         }
-        com.github.rzo1.bloodfields.telnet.TelnetServer server =
-                new com.github.rzo1.bloodfields.telnet.TelnetServer(port, maxSessions,
-                        proxyHost, proxyPort, name);
+        TelnetServer server = new TelnetServer(bind, port, maxSessions, proxyHost, proxyPort, proxyTls, proxyTrust, playerName, dataDir);
         try {
             server.start();
         } catch (IOException ex) {
             err.println("Error: " + ex.getMessage());
             return 1;
         }
-        out.println("Bloodfield C64 telnet server listening on port " + server.port()
+        out.println("Bloodfield C64 telnet server listening on "
+                + server.bindAddress().getHostAddress() + ":" + server.port()
                 + (proxyHost != null ? ", proxying to gRPC match at " + proxyHost + ":" + proxyPort : "")
                 + " (max " + maxSessions + " sessions). Press Ctrl+C to stop.");
+        if (proxyHost != null) {
+            out.println("Profile: " + server.profile().getName()
+                    + " [" + server.profile().getPlayerId() + "]");
+        }
+        if (!server.bindAddress().isLoopbackAddress()) {
+            out.println("WARNING: telnet has no authentication — anyone who can reach "
+                    + server.bindAddress().getHostAddress() + ":" + server.port()
+                    + " can connect. Use only on a trusted network.");
+        }
         out.flush();
         server.await();
         return 0;
@@ -643,8 +691,16 @@ public final class CliMain {
     // ----- grpc-server -----
 
     private static int grpcServer(String[] args, PrintStream out, PrintStream err) {
-        int port = com.github.rzo1.bloodfields.net.GrpcMatchServer.DEFAULT_PORT;
-        Path dataDir = defaultDataDir();
+        int port = GrpcMatchServer.DEFAULT_PORT;
+        InetAddress bind = null;
+        String snapshotKey = System.getenv("BLOODFIELD_SNAPSHOT_KEY");
+        Path dataDir = DataDirs.defaultDir();
+        String meshSecret = System.getenv("BLOODFIELD_MESH_SECRET");
+        if (meshSecret != null && meshSecret.isEmpty()) meshSecret = null;
+        boolean meshOpen = false;
+        java.io.File tlsCert = null;
+        java.io.File tlsKey = null;
+        if (snapshotKey != null && snapshotKey.isEmpty()) snapshotKey = null;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--port=")) {
@@ -654,12 +710,45 @@ public final class CliMain {
                     err.println("Bad --port: " + a);
                     return 2;
                 }
+            } else if (a.startsWith("--bind=")) {
+                try {
+                    bind = InetAddress.getByName(a.substring(7));
+                } catch (UnknownHostException uhe) {
+                    err.println("Bad --bind: " + a);
+                    return 2;
+                }
             } else if (a.startsWith("--data-dir=")) {
                 if (a.substring(11).isEmpty()) {
                     err.println("Bad --data-dir: " + a);
                     return 2;
                 }
                 dataDir = Path.of(a.substring(11));
+            } else if (a.startsWith("--mesh-secret=")) {
+                meshSecret = a.substring(14);
+                if (meshSecret.isEmpty()) {
+                    err.println("Bad --mesh-secret: " + a);
+                    return 2;
+                }
+            } else if (a.equals("--mesh-open")) {
+                meshOpen = true;
+            } else if (a.startsWith("--tls=")) {
+                int colon = a.lastIndexOf(':');
+                if (colon <= 6 || colon == a.length() - 1) {
+                    err.println("Bad --tls (expected cert.pem:key.pem): " + a);
+                    return 2;
+                }
+                tlsCert = new java.io.File(a.substring(6, colon));
+                tlsKey = new java.io.File(a.substring(colon + 1));
+                if (!tlsCert.isFile() || !tlsKey.isFile()) {
+                    err.println("Bad --tls (files not found): " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--snapshot-key=")) {
+                snapshotKey = a.substring(15);
+                if (snapshotKey.isEmpty()) {
+                    err.println("Bad --snapshot-key: " + a);
+                    return 2;
+                }
             } else {
                 err.println("Unknown flag: " + a);
                 return 2;
@@ -669,18 +758,38 @@ public final class CliMain {
             err.println("Bad --port: " + port);
             return 2;
         }
-        com.github.rzo1.bloodfields.net.GrpcMatchServer server =
-                new com.github.rzo1.bloodfields.net.GrpcMatchServer(port, dataDir);
+        SnapshotSigner signer = snapshotKey == null
+                ? new SnapshotSigner()
+                : new SnapshotSigner(snapshotKey);
+        MeshTrust trust = meshSecret != null ? MeshTrust.sealed(meshSecret)
+                : meshOpen ? MeshTrust.openCourt() : null;
+        GrpcMatchServer server = new GrpcMatchServer(bind, port, signer, tlsCert, tlsKey, dataDir, trust);
         try {
             server.start();
         } catch (java.io.IOException ex) {
             err.println("Error: " + ex.getMessage());
             return 1;
         }
-        out.println("Bloodfield gRPC match server on port " + server.port()
-                + " (data dir " + dataDir + "). Press Ctrl+C to stop.");
+        out.println("Bloodfield gRPC match server (" + (server.tlsEnabled() ? "TLS" : "plaintext") + ") on "
+                + server.bindAddress().getHostAddress() + ":" + server.port()
+                + ". Press Ctrl+C to stop.");
+        if (!server.bindAddress().isLoopbackAddress()) {
+            out.println("WARNING: " + (server.tlsEnabled() ? "TLS" : "PLAINTEXT")
+                    + " gRPC with no authentication — anyone who can reach "
+                    + server.bindAddress().getHostAddress() + ":" + server.port()
+                    + " can join or spectate. Use only on a trusted network.");
+        }
         out.println("Profile: " + server.profile().getName()
-                + " [" + server.profile().getPlayerId() + "]");
+                + " [" + server.profile().getPlayerId() + "]  data: " + dataDir);
+        out.println(trust == null
+                ? "Mesh gate shut (no --mesh-secret/--mesh-open): chronicles stay home."
+                : meshOpen
+                    ? "Mesh open court: unsigned records merge. Trusted networks only."
+                    : "Mesh sealed concordat: only records signed under the shared secret merge.");
+        if (snapshotKey == null) {
+            out.println("Snapshot seals are ephemeral (restores work until this server stops); "
+                    + "set --snapshot-key or BLOODFIELD_SNAPSHOT_KEY for seals that survive restarts.");
+        }
         out.flush();
         server.blockUntilShutdown();
         return 0;
@@ -688,13 +797,9 @@ public final class CliMain {
 
     // ----- profile / saves / mesh -----
 
-    private static Path defaultDataDir() {
-        return Path.of(System.getProperty("user.home"), ".bloodfield");
-    }
-
     private static int profile(String[] args, PrintStream out, PrintStream err) {
         String name = null;
-        Path dataDir = defaultDataDir();
+        Path dataDir = DataDirs.defaultDir();
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--name=")) {
@@ -726,7 +831,8 @@ public final class CliMain {
     }
 
     private static int saves(String[] args, PrintStream out, PrintStream err) {
-        Path dataDir = defaultDataDir();
+        Path dataDir = DataDirs.defaultDir();
+        boolean verify = false;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--data-dir=")) {
@@ -735,14 +841,18 @@ public final class CliMain {
                     return 2;
                 }
                 dataDir = Path.of(a.substring(11));
+            } else if (a.equals("--verify")) {
+                verify = true;
             } else {
                 err.println("Unknown flag: " + a);
                 return 2;
             }
         }
+        SaveStore store = SaveStore.at(dataDir);
         Json.Arr arr = Json.arr();
-        for (SaveMeta meta : SaveStore.at(dataDir).list()) {
-            arr.add(Json.obj()
+        int failures = 0;
+        for (SaveMeta meta : store.list()) {
+            Json.Obj o = Json.obj()
                     .str("saveId", meta.getSaveId())
                     .str("label", meta.getLabel())
                     .num("createdEpochMs", meta.getCreatedEpochMs())
@@ -751,16 +861,35 @@ public final class CliMain {
                     .num("budget", meta.getBudget())
                     .str("phase", meta.getPhase().name())
                     .num("tick", meta.getTick())
-                    .num("sizeBytes", meta.getSizeBytes())
-                    .build());
+                    .num("sizeBytes", meta.getSizeBytes());
+            if (verify) {
+                SaveCodec.ReplayVerdict verdict;
+                try {
+                    verdict = SaveCodec.replayHolds(SaveCodec.decode(store.get(meta.getSaveId())));
+                } catch (RuntimeException ex) {
+                    verdict = SaveCodec.ReplayVerdict.FAILS;
+                }
+                o = o.str("replayAudit", verdict.name());
+                if (verdict == SaveCodec.ReplayVerdict.FAILS) failures++;
+            }
+            arr.add(o.build());
         }
         out.println(arr.build());
+        if (failures > 0) {
+            err.println(failures + " save(s) FAILED the replay audit");
+            return 1;
+        }
         return 0;
     }
 
     private static int mesh(String[] args, PrintStream out, PrintStream err) {
         String peer = null;
-        Path dataDir = defaultDataDir();
+        Path dataDir = DataDirs.defaultDir();
+        String meshSecret = System.getenv("BLOODFIELD_MESH_SECRET");
+        if (meshSecret != null && meshSecret.isEmpty()) meshSecret = null;
+        boolean meshOpen = false;
+        boolean peerTls = false;
+        java.io.File peerTrust = null;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--peer=")) {
@@ -771,13 +900,26 @@ public final class CliMain {
                     return 2;
                 }
                 dataDir = Path.of(a.substring(11));
+            } else if (a.startsWith("--mesh-secret=")) {
+                meshSecret = a.substring(14);
+            } else if (a.equals("--mesh-open")) {
+                meshOpen = true;
+            } else if (a.equals("--peer-tls")) {
+                peerTls = true;
+            } else if (a.startsWith("--peer-tls=")) {
+                peerTls = true;
+                peerTrust = new java.io.File(a.substring(11));
+                if (!peerTrust.isFile()) {
+                    err.println("Bad --peer-tls (trust file not found): " + a);
+                    return 2;
+                }
             } else {
                 err.println("Unknown flag: " + a);
                 return 2;
             }
         }
         if (peer == null || peer.isEmpty()) {
-            err.println("Usage: mesh --peer=host:port [--data-dir=DIR]");
+            err.println("Usage: mesh --peer=host:port [--data-dir=DIR] [--mesh-secret=S | --mesh-open]");
             return 2;
         }
         int colon = peer.lastIndexOf(':');
@@ -796,16 +938,23 @@ public final class CliMain {
             err.println("Bad --peer (expected host:port): " + peer);
             return 2;
         }
+        MeshTrust trust = meshSecret != null ? MeshTrust.sealed(meshSecret)
+                : meshOpen ? MeshTrust.openCourt() : null;
+        if (trust == null) {
+            err.println("The concordat is unsigned: pass --mesh-secret (sealed realm) or --mesh-open (open court).");
+            return 2;
+        }
         String host = peer.substring(0, colon);
         try {
-            out.println(boardJson(MeshClient.sync(host, port, dataDir)));
+            Leaderboard merged = MeshClient.sync(host, port, dataDir, trust, peerTls, peerTrust);
+            out.println(boardJson(merged));
             return 0;
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             err.println("Interrupted");
             return 1;
         } catch (RuntimeException ex) {
-            err.println("Mesh sync failed: " + ex.getMessage());
+            err.println("Mesh union failed: " + ex.getMessage());
             return 1;
         }
     }
@@ -848,40 +997,14 @@ public final class CliMain {
                 err.println("Bad budget: " + parts[2]);
                 return null;
             }
-            World world = buildWorld(p.id());
-            return HeadlessGame.fromMap(world, budget,
-                    MapStructures.forPreset(p.id(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT, idSource()));
+            return HeadlessGame.forMap(p.id(), budget);
         }
         int idx = resolveLevelIndex(spec);
         if (idx < 0) {
             err.println("Unknown level/map: " + spec);
             return null;
         }
-        Level lv = Levels.all().get(idx);
-        World world = buildWorld(lv.mapId());
-        HeadlessGame game = HeadlessGame.fromMap(world, lv.playerBudget(),
-                MapStructures.forPreset(lv.mapId(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT, idSource()));
-        for (Map.Entry<UnitType, Integer> e : lv.playerCaps().entrySet()) {
-            game.setPlayerCap(e.getKey(), e.getValue());
-        }
-        lv.spawner().spawn(game.enemy(), game.state(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT);
-        return game;
-    }
-
-    private static World buildWorld(String mapId) {
-        MapPreset p = Maps.byId(mapId);
-        int cols = (int) Math.ceil((double) HeadlessGame.WIDTH / HeadlessGame.TILE);
-        int rows = (int) Math.ceil((double) HeadlessGame.HEIGHT / HeadlessGame.TILE);
-        Terrain.TileType[][] tiles = (p == null) ? null : p.generator().generate(cols, rows);
-        if (tiles == null) {
-            return World.battlefield(HeadlessGame.WIDTH, HeadlessGame.HEIGHT, HeadlessGame.TILE);
-        }
-        return new World(HeadlessGame.WIDTH, HeadlessGame.HEIGHT, HeadlessGame.TILE, tiles);
-    }
-
-    private static java.util.function.Supplier<Long> idSource() {
-        long[] seed = {-1L};
-        return () -> seed[0]--;
+        return HeadlessGame.forLevel(Levels.all().get(idx));
     }
 
     private static UnitType parseUnitType(Object o) {

@@ -3,6 +3,7 @@ package com.github.rzo1.bloodfields.telnet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.github.rzo1.bloodfields.engine.BattleDriver;
 import com.github.rzo1.bloodfields.cli.HeadlessGame;
 import com.github.rzo1.bloodfields.engine.World;
 import com.github.rzo1.bloodfields.model.Faction;

@@ -150,7 +150,7 @@ class MatchSaveRecordTest {
         assertEquals(Phase.DEPLOY, saved.getSaved().getPhase());
         assertFalse(saved.getSaved().getSaveId().isBlank());
 
-        byte[] bytes = saved.getSaved().getSnapshot().toByteArray();
+        byte[] bytes = saved.getSaved().getSaveRecord().toByteArray();
         assertTrue(SaveCodec.isSaveRecord(bytes));
         SaveRecord rec = SaveCodec.decode(bytes);
         assertEquals(saved.getSaved().getSaveId(), rec.getSaveId());
@@ -160,7 +160,7 @@ class MatchSaveRecordTest {
         assertEquals(1, rec.getHead().getUnitsCount());
         assertEquals(Phase.DEPLOY, rec.getHead().getPhase());
         assertEquals(1, rec.getActionsCount());
-        PlayerMessage journaled = rec.getActions(0);
+        PlayerMessage journaled = rec.getActions(0).getMessage();
         assertEquals(PlayerMessage.MsgCase.PLACE, journaled.getMsgCase());
         assertEquals(UnitKind.INFANTRY, journaled.getPlace().getType());
         assertEquals(640, journaled.getPlace().getX(), 1e-9);
@@ -182,17 +182,17 @@ class MatchSaveRecordTest {
 
         red.save("second");
         GameMessage second = await(red, GameMessage::hasSaved);
-        SaveRecord rec = SaveCodec.decode(second.getSaved().getSnapshot().toByteArray());
+        SaveRecord rec = SaveCodec.decode(second.getSaved().getSaveRecord().toByteArray());
         // base is the previous head (one unit); only the new place is journaled
-        SaveRecord firstRec = SaveCodec.decode(first.getSaved().getSnapshot().toByteArray());
+        SaveRecord firstRec = SaveCodec.decode(first.getSaved().getSaveRecord().toByteArray());
         assertEquals(firstRec.getHead(), rec.getBase());
         assertEquals(1, rec.getBase().getUnitsCount());
         assertEquals(1, rec.getActionsCount());
-        assertEquals(PlayerMessage.MsgCase.PLACE, rec.getActions(0).getMsgCase());
+        assertEquals(PlayerMessage.MsgCase.PLACE, rec.getActions(0).getMessage().getMsgCase());
 
         red.save("third");
         GameMessage third = await(red, GameMessage::hasSaved);
-        assertEquals(0, SaveCodec.decode(third.getSaved().getSnapshot().toByteArray())
+        assertEquals(0, SaveCodec.decode(third.getSaved().getSaveRecord().toByteArray())
                 .getActionsCount());
     }
 
@@ -333,7 +333,7 @@ class MatchSaveRecordTest {
                     && "ann".equals(m.getSaved().getSavedBy()));
             assertEquals("slot-1", event.getSaved().getLabel());
             assertEquals(Phase.DEPLOY, event.getSaved().getPhase());
-            SaveRecord rec = SaveCodec.decode(event.getSaved().getSnapshot().toByteArray());
+            SaveRecord rec = SaveCodec.decode(event.getSaved().getSaveRecord().toByteArray());
             assertEquals(saveId, rec.getSaveId());
             assertEquals(1, rec.getHead().getUnitsCount());
         }

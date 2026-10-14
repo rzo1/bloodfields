@@ -216,7 +216,7 @@ class GameClientTest {
         GameMessage first = await("blue: lobby with RED ready", blue,
                 m -> m.hasLobby() && m.getLobby().getPlayersList().stream()
                         .anyMatch(p -> p.getFaction()
-                                == com.github.rzo1.bloodfields.net.proto.Faction.RED
+                                == com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED
                                 && p.getReady()));
         assertEquals(2, first.getLobby().getPlayersCount());
 
@@ -224,5 +224,18 @@ class GameClientTest {
                 .setSetReady(SetReady.newBuilder().setReady(true)));
         GameMessage second = await("blue: deploy", blue, GameMessage::hasDeploy);
         assertEquals(400.0, second.getDeploy().getRedZone().getMinY(), 1e-9);
+    }
+
+    @Test
+    void takeReturnsNullAfterCloseInsteadOfBlockingForever() throws Exception {
+        GameClient client = connect(startServer(), "solo");
+        await("welcome", client, GameMessage::hasWelcome);
+        client.close();
+        long start = System.currentTimeMillis();
+        // Queued frames drain first; then take() must return, not hang.
+        while (client.take() != null) {
+            assertTrue(System.currentTimeMillis() - start < 2000,
+                    "take() must drain and return null promptly after close");
+        }
     }
 }

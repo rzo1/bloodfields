@@ -1,6 +1,6 @@
 package com.github.rzo1.bloodfields.net;
 
-import com.github.rzo1.bloodfields.cli.Json;
+import com.github.rzo1.bloodfields.util.Json;
 import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
 
 import java.io.IOException;
@@ -93,16 +93,7 @@ public final class ProfileStore {
                 .num("createdEpochMs", createdEpochMs)
                 .build();
         try {
-            Files.createDirectories(dir);
-            Path file = dir.resolve(FILE_NAME);
-            Path tmp = dir.resolve(FILE_NAME + ".tmp");
-            Files.writeString(tmp, json, StandardCharsets.UTF_8);
-            try {
-                Files.move(tmp, file,
-                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-            }
+            com.github.rzo1.bloodfields.util.AtomicFiles.writeString(dir.resolve(FILE_NAME), json);
         } catch (IOException e) {
             throw new UncheckedIOException("cannot persist profile", e);
         }

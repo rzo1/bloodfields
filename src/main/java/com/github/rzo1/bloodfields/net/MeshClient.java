@@ -26,6 +26,7 @@ import io.grpc.stub.StreamObserver;
  * (this side) drives the protocol: after the peer's hello, records, and board
  * arrive, it sends the records the peer lacks plus the union board and
  * half-closes. Re-syncing is idempotent because merging is by match_id.
+ * Records flow only as far as the {@link MeshTrust} concordat allows.
  */
 public final class MeshClient {
 
@@ -33,19 +34,41 @@ public final class MeshClient {
 
     private MeshClient() {}
 
-    /** Loads the local profile and record store under {@code dataDir} and syncs with the peer. */
+    /** Loads the local profile and record store under {@code dataDir} and syncs (open court). */
     public static Leaderboard sync(String host, int port, Path dataDir) throws InterruptedException {
-        return sync(host, port,
-                ProfileStore.loadOrCreate(dataDir), LeaderboardStore.at(dataDir));
+        return sync(host, port, dataDir, MeshTrust.openCourt(), false, null);
+    }
+
+    /** Syncs under a trust policy, optionally over TLS (pinned trust PEM or null). */
+    public static Leaderboard sync(String host, int port, Path dataDir, MeshTrust trust,
+                                   boolean tls, java.io.File trustCert) throws InterruptedException {
+        return sync(host, port, ProfileStore.loadOrCreate(dataDir),
+                LeaderboardStore.at(dataDir), trust, tls, trustCert);
     }
 
     static Leaderboard sync(String host, int port, PlayerProfile profile, LeaderboardStore store)
             throws InterruptedException {
-        ManagedChannel channel = NettyChannelBuilder.forAddress(host, port)
-                .usePlaintext()
+        return sync(host, port, profile, store, MeshTrust.openCourt(), false, null);
+    }
+
+    static Leaderboard sync(String host, int port, PlayerProfile profile, LeaderboardStore store,
+                            MeshTrust trust, boolean tls, java.io.File trustCert)
+            throws InterruptedException {
+        NettyChannelBuilder builder = NettyChannelBuilder.forAddress(host, port);
+        try {
+            if (tls) {
+                builder.sslContext(Tls.clientContext(trustCert));
+            } else {
+                builder.usePlaintext();
+            }
+        } catch (javax.net.ssl.SSLException e) {
+            throw new IllegalArgumentException("TLS setup failed: " + e.getMessage(), e);
+        }
+        ManagedChannel channel = builder
+                .maxInboundMessageSize(GrpcMatchServer.MAX_INBOUND_MESSAGE_BYTES)
                 .build();
         try {
-            Session session = new Session(store);
+            Session session = new Session(store, trust);
             BloodfieldMeshGrpc.BloodfieldMeshStub stub = BloodfieldMeshGrpc.newStub(channel)
                     .withDeadlineAfter(DEADLINE_MS, TimeUnit.MILLISECONDS);
             session.request = stub.sync(session);
@@ -70,6 +93,8 @@ public final class MeshClient {
 
     private static final class Session implements StreamObserver<MeshMessage> {
         final LeaderboardStore store;
+        final MeshTrust trust;
+        int received;
         final CountDownLatch done = new CountDownLatch(1);
         final AtomicReference<Leaderboard> result = new AtomicReference<>();
         final AtomicReference<Throwable> error = new AtomicReference<>();
@@ -77,19 +102,25 @@ public final class MeshClient {
         final AtomicBoolean boardReceived = new AtomicBoolean();
         volatile StreamObserver<MeshMessage> request;
 
-        Session(LeaderboardStore store) {
+        Session(LeaderboardStore store, MeshTrust trust) {
             this.store = store;
+            this.trust = trust;
         }
 
         @Override
         public void onNext(MeshMessage msg) {
             switch (msg.getMsgCase()) {
                 case HELLO -> peerIds.addAll(msg.getHello().getRecordIdsList());
-                case RECORD -> store.add(msg.getRecord());
+                case RECORD -> {
+                    if (++received <= MeshService.MAX_RECORDS_PER_SYNC
+                            && trust.accepts(msg.getRecord())) {
+                        store.add(msg.getRecord());
+                    }
+                }
                 case BOARD -> {
                     if (boardReceived.compareAndSet(false, true)) {
                         for (MatchRecord r : store.records()) {
-                            if (!peerIds.contains(r.getMatchId())) {
+                            if (!peerIds.contains(r.getMatchId()) && trust.accepts(r)) {
                                 request.onNext(MeshMessage.newBuilder().setRecord(r).build());
                             }
                         }
