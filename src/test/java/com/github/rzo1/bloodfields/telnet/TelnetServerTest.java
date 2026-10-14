@@ -62,15 +62,21 @@ class TelnetServerTest {
             server.start();
             try (Socket client = connect(server)) {
                 readUntil(client.getInputStream(), "CAMPAIGN");
-                // IAC DO ECHO, IAC WILL SGA, then the '3' key for help.
+                // IAC DO ECHO + IAC WILL SGA acknowledge the server's offers
+                // and must be skipped silently (a WONT ECHO would withdraw
+                // the offer); an unsolicited DO NAWS is refused. Then '3'.
                 client.getOutputStream().write(new byte[]{
                         (byte) 255, (byte) 253, 1,
                         (byte) 255, (byte) 251, 3,
+                        (byte) 255, (byte) 253, 31,
                         '3'});
                 client.getOutputStream().flush();
                 byte[] out = readUntil(client.getInputStream(), "INFANTRY");
-                assertContainsBytes(out, new byte[]{(byte) 255, (byte) 252, 1},
-                        "IAC WONT ECHO response");
+                assertContainsBytes(out, new byte[]{(byte) 255, (byte) 252, 31},
+                        "IAC WONT NAWS response");
+                assertTrue(java.util.stream.IntStream.range(0, out.length - 2)
+                                .noneMatch(i -> out[i] == (byte) 255 && out[i + 1] == (byte) 252 && out[i + 2] == 1),
+                        "offered ECHO must never be withdrawn with WONT");
                 assertContainsBytes(out, "INFANTRY".getBytes(StandardCharsets.US_ASCII),
                         "help screen reachable after negotiation junk");
             }
