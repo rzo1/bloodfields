@@ -236,27 +236,51 @@ with `--data-dir=DIR`): a persistent **player profile** (`profile`), durable
 **save states** (`saves`), and every **match record** it has seen
 (`records.json`).
 
-A save state is a *base snapshot plus the queue of actions applied since*,
-with the current head snapshot for instant restore — gzip-compressed on the
-wire and on disk (a mid-battle save is a few hundred bytes). Each save
-compacts the action queue. Both players' clients persist every save and every
-match record automatically; the handshake (`Join`/`Welcome`) advertises the
-saves each side holds, so a peer can pull one (`F` on the C64 proxy) and
-restore straight into it — even from the lobby.
+A save state is a *base snapshot plus the queue of actions applied since*
+(each action stamped with its author's faction), with the current head
+snapshot for instant restore — gzip-compressed (bounded decode: a bomb is
+refused, not inflated), sealed whole by the issuing server. Each save
+compacts the action queue; the queue also compacts itself at 2048 actions.
+`CliMain saves --verify` audits the trove: it replays every deployment
+save's queue onto its base and demands the head come out identical, so a
+save can *prove* its own history. Stores are capped (100 saves, oldest
+pruned), writes are atomic, remote saves never overwrite local ones of
+the same id, and listing reads tiny metadata sidecars instead of
+decompressing anything. Both players' clients persist every save and match
+record automatically; the handshake (`Join`/`Welcome`) advertises saves,
+so a peer can pull one (`F` on the C64 proxy) — restoring, like everywhere,
+takes both players' consent — even from the lobby.
 
-Finished matches broadcast a signed-off `MatchRecord` to both players. Servers
-gossip records over a second streaming RPC, `BloodfieldMesh.Sync`: two nodes
-exchange record sets and merge by match id, so re-syncing is idempotent and
-**leaderboards that join the same mesh simply aggregate their totals**:
+Finished matches broadcast a `MatchRecord` to both players. Servers gossip
+records over a second streaming RPC, `BloodfieldMesh.Sync`: a `HELLO`
+herald first (records before it are refused), then record sets merge by
+match id (**idempotent union** (set-reconciliation protocol)), so when two
+kingdoms join their chronicles become *one realm's* chronicle and
+**leaderboards simply aggregate their totals**. The union is governed by a
+concordat, because an unsigned chronicle is just a claim, and the mesh gate
+is **shut by default**:
+
+- `--mesh-secret=S` (or `BLOODFIELD_MESH_SECRET`) — the **sealed concordat**:
+  nodes sharing the secret form one realm (trust domain); hosting servers
+  sign the records they issue, and peers chronicle only signature-valid
+  ones. Forged victories from outside the realm are refused.
+- `--mesh-open` — the **open court**: unsigned (but structurally validated:
+  winner must be a combatant, no lord on both sides, sane bounds) records
+  merge. Delightful for a living room, worthless as evidence — know which
+  court you are in.
 
 ```bash
-java -cp ... CliMain profile --name=RICK          # set your display name
-java -cp ... CliMain saves                        # list local save states
-java -cp ... CliMain mesh --peer=hostB:6411       # sync records, print the board
+java -cp ... CliMain profile --name=RICK                      # set your display name
+java -cp ... CliMain saves --verify                           # list + replay-audit saves
+java -cp ... CliMain grpc-server --mesh-secret=our-realm     # host under the concordat
+java -cp ... CliMain mesh --peer=hostB:6411 --mesh-secret=our-realm   # join the union
 ```
 
-The C64 proxy joins with its profile name and shows the mesh leaderboard in
-PETSCII with `L`.
+The C64 proxy joins under a *per-session* identity (one telnet server
+hosting both seats suffixes `RICK`, `RICK-2` with distinct ids — a lord
+cannot sit on both sides of his own record) and shows the joined
+leaderboard in PETSCII with `L`. A full match also offers the third C64
+the spectator gallery (`W`).
 
 ## Native installer
 

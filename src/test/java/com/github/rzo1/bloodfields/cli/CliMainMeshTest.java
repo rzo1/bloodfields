@@ -121,14 +121,20 @@ class CliMainMeshTest {
         assertEquals(2, run(new String[]{"mesh", "--peer=not-a-host-port"}).exitCode);
         assertEquals(2, run(new String[]{"mesh", "--peer=host:99999"}).exitCode);
         assertEquals(2, run(new String[]{"mesh", "--bogus"}).exitCode);
-        Captured refused = run(new String[]{"mesh", "--peer=127.0.0.1:1", "--data-dir=" + tmp});
+        Captured refused = run(new String[]{"mesh", "--peer=127.0.0.1:1", "--mesh-open",
+                "--data-dir=" + tmp});
         assertEquals(1, refused.exitCode);
-        assertTrue(refused.err.contains("Mesh sync failed"));
+        assertTrue(refused.err.contains("Mesh union failed"), refused.err);
+        // And the unsigned concordat itself is a usage error, not a sync.
+        assertEquals(2, run(new String[]{"mesh", "--peer=127.0.0.1:1",
+                "--data-dir=" + tmp}).exitCode);
     }
 
     @Test
     void meshSyncsWithAPeerServer(@TempDir Path serverDir, @TempDir Path clientDir) throws Exception {
-        GrpcMatchServer server = new GrpcMatchServer(0, serverDir);
+        GrpcMatchServer server = new GrpcMatchServer(null, 0,
+                new com.github.rzo1.bloodfields.net.SnapshotSigner(),
+                null, null, serverDir, com.github.rzo1.bloodfields.net.MeshTrust.openCourt());
         server.start();
         servers.add(server);
         LeaderboardStore store = server.leaderboardStore();
@@ -144,7 +150,7 @@ class CliMainMeshTest {
                 .build());
 
         Captured c = run(new String[]{"mesh",
-                "--peer=127.0.0.1:" + server.port(), "--data-dir=" + clientDir});
+                "--peer=127.0.0.1:" + server.port(), "--mesh-open", "--data-dir=" + clientDir});
         assertEquals(0, c.exitCode, "mesh failed: " + c.err);
         Map<String, Object> board = Json.parseObject(c.out.trim());
         assertEquals(1, ((Number) board.get("totalRecords")).intValue());

@@ -65,7 +65,7 @@ public final class Match {
     static final long BROADCAST_MS = 250;
     static final int MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
     static final int MAX_SPECTATORS = 8;
-    static final long SAVE_RESTORE_MIN_INTERVAL_MS = 2000;
+    static final long SAVE_RESTORE_MIN_INTERVAL_MS = 500;
 
     private final Object lock = new Object();
     private final String serverName;
@@ -88,7 +88,7 @@ public final class Match {
     private final MeshTrust meshTrust;
     private final String issuerId;
     private final MatchJournal journal = new MatchJournal();
-    private String matchId = UUID.randomUUID().toString();
+    private String matchId = ""; // minted per contest: deploy, rematch, restore
     private List<SaveMeta> cachedSaves = List.of();
     private final List<MatchClient> spectators = new ArrayList<>();
     private PendingRestore pendingRestore;
@@ -325,6 +325,7 @@ public final class Match {
         seat.client = client;
         if (!reclaim) seat.token = newToken();
         client.slot = seat;
+        refreshSaveCache(); // sidecar metadata only — no decompression under the lock
         client.send(GameMessage.newBuilder()
                 .setWelcome(Welcome.newBuilder()
                         .setYourFaction(ProtoMapper.factionKind(seat.faction))

@@ -43,6 +43,7 @@ class MatchSaveRecordTest {
     private Server server;
     private final List<ManagedChannel> channels = new ArrayList<>();
     private Match match;
+    private final SnapshotSigner signer = new SnapshotSigner("test-seal");
     private String serverName;
     private Path dataDir;
 
@@ -50,7 +51,7 @@ class MatchSaveRecordTest {
     void setUp(@TempDir Path tmp) throws Exception {
         this.dataDir = tmp;
         serverName = InProcessServerBuilder.generateName();
-        match = new Match("test", 5, tmp);
+        match = new Match("test", 5, signer, tmp, null, "");
         server = InProcessServerBuilder.forName(serverName)
                 .directExecutor()
                 .addService(new BloodfieldService(match))
@@ -65,6 +66,12 @@ class MatchSaveRecordTest {
             c.shutdownNow();
         }
         server.shutdownNow();
+    }
+
+    /** The foe consents to a proposed parley (restore), as the law now requires. */
+    private static void consent(GameClient foe) {
+        foe.send(PlayerMessage.newBuilder().setConsentRestore(
+                com.github.rzo1.bloodfields.net.proto.ConsentRestore.newBuilder().setAccept(true)));
     }
 
     private GameClient client(String name) {
@@ -167,7 +174,7 @@ class MatchSaveRecordTest {
     }
 
     @Test
-    void secondSaveCompactsTheJournal() {
+    void secondSaveCompactsTheJournal() throws Exception {
         GameClient[] both = intoDeploy();
         GameClient red = both[0];
         GameClient blue = both[1];
@@ -180,6 +187,7 @@ class MatchSaveRecordTest {
         place(blue, UnitKind.INFANTRY, 640, 100);
         await(red, m -> m.hasDeploy() && m.getDeploy().getUnitsCount() == 2);
 
+        Thread.sleep(600); // save rate limit is 500 ms now
         red.save("second");
         GameMessage second = await(red, GameMessage::hasSaved);
         SaveRecord rec = SaveCodec.decode(second.getSaved().getSaveRecord().toByteArray());
@@ -190,6 +198,7 @@ class MatchSaveRecordTest {
         assertEquals(1, rec.getActionsCount());
         assertEquals(PlayerMessage.MsgCase.PLACE, rec.getActions(0).getMessage().getMsgCase());
 
+        Thread.sleep(600);
         red.save("third");
         GameMessage third = await(red, GameMessage::hasSaved);
         assertEquals(0, SaveCodec.decode(third.getSaved().getSaveRecord().toByteArray())
@@ -200,8 +209,10 @@ class MatchSaveRecordTest {
     void legacyRawSnapshotRestoreStillWorks() {
         GameClient[] both = intoDeploy();
         GameClient red = both[0];
-        Snapshot snap = deploySnapshotWithOneUnit();
+        Snapshot snap = signer.seal(deploySnapshotWithOneUnit());
         red.restore(snap.toByteArray());
+        await(both[1], GameMessage::hasRestoreProposed);
+        consent(both[1]);
 
         GameMessage restored = await(red, GameMessage::hasRestored);
         assertEquals(Phase.DEPLOY, restored.getRestored().getPhase());
@@ -216,9 +227,11 @@ class MatchSaveRecordTest {
         GameClient[] both = intoDeploy();
         GameClient red = both[0];
         Snapshot snap = deploySnapshotWithOneUnit();
-        byte[] bytes = SaveCodec.encode(SaveCodec.fromSnapshots(
-                "restore-id", "from-bytes", "tester", null, null, snap));
+        byte[] bytes = SaveCodec.encode(SaveCodec.seal(signer, SaveCodec.fromSnapshots(
+                "restore-id", "from-bytes", "tester", null, null, snap)));
         red.restore(bytes);
+        await(both[1], GameMessage::hasRestoreProposed);
+        consent(both[1]);
 
         GameMessage restored = await(red, GameMessage::hasRestored);
         assertEquals(Phase.DEPLOY, restored.getRestored().getPhase());
@@ -234,9 +247,11 @@ class MatchSaveRecordTest {
         await(blue, GameMessage::hasWelcome);
 
         Snapshot head = battleSnapshot();
-        byte[] bytes = SaveCodec.encode(SaveCodec.fromSnapshots(
-                "lobby-id", "lobby-restore", "tester", null, null, head));
+        byte[] bytes = SaveCodec.encode(SaveCodec.seal(signer, SaveCodec.fromSnapshots(
+                "lobby-id", "lobby-restore", "tester", null, null, head)));
         red.restore(bytes);
+        await(blue, GameMessage::hasRestoreProposed);
+        consent(blue);
 
         GameMessage restored = await(blue, GameMessage::hasRestored);
         assertEquals(Phase.BATTLE, restored.getRestored().getPhase());

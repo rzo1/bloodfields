@@ -38,7 +38,7 @@ class MeshSyncTest {
                                    String winnerId, boolean draw) {
         return MatchRecord.newBuilder()
                 .setMatchId(matchId)
-                .setEndedEpochMs(ended)
+                .setEndedEpochMs(1_700_000_000_000L + ended)
                 .setRed(PlayerProfile.newBuilder().setPlayerId(redId).setName(redName))
                 .setBlue(PlayerProfile.newBuilder().setPlayerId(blueId).setName(blueName))
                 .setWinnerId(winnerId)

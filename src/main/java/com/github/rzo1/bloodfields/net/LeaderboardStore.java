@@ -125,7 +125,10 @@ public final class LeaderboardStore {
         if (r == null || r.getMatchId().isBlank() || r.getMatchId().length() > 64) return false;
         String redId = r.getRed().getPlayerId();
         String blueId = r.getBlue().getPlayerId();
-        if (redId.isBlank() || blueId.isBlank() || redId.equals(blueId)) return false;
+        // One anonymous side is lawful (a named lord vs a nameless guest);
+        // two blanks is nobody's chronicle, and the same lord twice is fraud.
+        if (redId.isBlank() && blueId.isBlank()) return false;
+        if (!redId.isBlank() && redId.equals(blueId)) return false;
         if (redId.length() > 64 || blueId.length() > 64) return false;
         if (r.getRed().getName().length() > 64 || r.getBlue().getName().length() > 64) return false;
         if (r.getDraw()) {

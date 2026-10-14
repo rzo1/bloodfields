@@ -28,7 +28,7 @@ class LeaderboardStoreTest {
                                    String winnerId, boolean draw) {
         return MatchRecord.newBuilder()
                 .setMatchId(matchId)
-                .setEndedEpochMs(ended)
+                .setEndedEpochMs(1_700_000_000_000L + ended) // plausible hour, sorted by offset
                 .setRed(profile(redId, redName))
                 .setBlue(profile(blueId, blueName))
                 .setWinnerId(winnerId)

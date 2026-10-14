@@ -131,7 +131,7 @@ public final class SaveCodec {
     }
 
     public static boolean isSaveRecord(byte[] bytes) {
-        return hasMagic(bytes);
+        return hasMagic(bytes) && (bytes[3] & 0xff) == FORMAT_VERSION;
     }
 
     public static SaveMeta meta(SaveRecord record, int sizeBytes) {
