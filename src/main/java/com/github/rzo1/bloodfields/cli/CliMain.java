@@ -6,15 +6,17 @@ import com.github.rzo1.bloodfields.engine.World;
 import com.github.rzo1.bloodfields.model.Army;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.HeroSkill;
-import com.github.rzo1.bloodfields.model.Terrain;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitType;
 import com.github.rzo1.bloodfields.ui.Level;
 import com.github.rzo1.bloodfields.ui.LevelCodes;
 import com.github.rzo1.bloodfields.ui.Levels;
 import com.github.rzo1.bloodfields.ui.MapPreset;
-import com.github.rzo1.bloodfields.ui.MapStructures;
 import com.github.rzo1.bloodfields.ui.Maps;
+import com.github.rzo1.bloodfields.telnet.TelnetServer;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -54,6 +56,7 @@ public final class CliMain {
                 case "play" -> play(args, in, out, err);
                 case "sim" -> sim(args, out, err);
                 case "replay" -> replay(args, out, err);
+                case "telnet" -> telnet(args, out, err);
                 default -> {
                     err.println("Unknown command: " + cmd);
                     printHelp(err);
@@ -84,6 +87,13 @@ public final class CliMain {
         out.println("    --max-ticks=N       Max ticks (default " + DEFAULT_MAX_TICKS + ").");
         out.println("  replay <file>         Replay a recorded battle headlessly.");
         out.println("    --max-ticks=N       Max ticks (default " + DEFAULT_MAX_TICKS + ").");
+        out.println("  telnet                Start the Commodore 64 PETSCII telnet server.");
+        out.println("    --port=N            Listen port (default "
+                + TelnetServer.DEFAULT_PORT + ").");
+        out.println("    --sessions=N        Max concurrent sessions (default "
+                + TelnetServer.DEFAULT_MAX_SESSIONS + ").");
+        out.println("    --bind=ADDR         Bind address (default " + TelnetServer.DEFAULT_BIND
+                + "; use 0.0.0.0 on a trusted LAN for real C64 hardware).");
         out.println("  help                  This message.");
         out.println();
         out.println("Play commands (one JSON object per line):");
@@ -135,14 +145,7 @@ public final class CliMain {
             return 2;
         }
         Level lv = Levels.all().get(idx);
-        World world = buildWorld(lv.mapId());
-        HeadlessGame game = HeadlessGame.fromMap(world, lv.playerBudget(),
-                MapStructures.forPreset(lv.mapId(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT, idSource()));
-        // Apply caps and spawn enemy via the level's spawner.
-        for (Map.Entry<UnitType, Integer> e : lv.playerCaps().entrySet()) {
-            game.setPlayerCap(e.getKey(), e.getValue());
-        }
-        lv.spawner().spawn(game.enemy(), game.state(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT);
+        HeadlessGame game = HeadlessGame.forLevel(lv);
 
         Json.Arr enemies = Json.arr();
         for (Unit u : game.enemy().units()) {
@@ -228,7 +231,7 @@ public final class CliMain {
             err.println("Unknown map: " + args[1]);
             return 2;
         }
-        World world = buildWorld(p.id());
+        World world = HeadlessGame.buildWorld(p.id());
         Json.Obj root = Json.obj()
                 .str("id", p.id())
                 .str("name", p.name())
@@ -524,6 +527,68 @@ public final class CliMain {
         }
     }
 
+    // ----- telnet -----
+
+    private static int telnet(String[] args, PrintStream out, PrintStream err) {
+        int port = TelnetServer.DEFAULT_PORT;
+        int maxSessions = TelnetServer.DEFAULT_MAX_SESSIONS;
+        InetAddress bind = null;
+        for (int i = 1; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--port=")) {
+                try {
+                    port = Integer.parseInt(a.substring(7));
+                } catch (NumberFormatException nfe) {
+                    err.println("Bad --port: " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--bind=")) {
+                try {
+                    bind = InetAddress.getByName(a.substring(7));
+                } catch (UnknownHostException uhe) {
+                    err.println("Bad --bind: " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--sessions=")) {
+                try {
+                    maxSessions = Integer.parseInt(a.substring(11));
+                } catch (NumberFormatException nfe) {
+                    err.println("Bad --sessions: " + a);
+                    return 2;
+                }
+            } else {
+                err.println("Unknown flag: " + a);
+                return 2;
+            }
+        }
+        if (port < 0 || port > 65535) {
+            err.println("Bad --port: " + port);
+            return 2;
+        }
+        if (maxSessions < 1) {
+            err.println("Bad --sessions: " + maxSessions);
+            return 2;
+        }
+        TelnetServer server = new TelnetServer(bind, port, maxSessions);
+        try {
+            server.start();
+        } catch (IOException ex) {
+            err.println("Error: " + ex.getMessage());
+            return 1;
+        }
+        out.println("Bloodfield C64 telnet server listening on "
+                + server.bindAddress().getHostAddress() + ":" + server.port()
+                + " (max " + maxSessions + " sessions). Press Ctrl+C to stop.");
+        if (!server.bindAddress().isLoopbackAddress()) {
+            out.println("WARNING: telnet has no authentication — anyone who can reach "
+                    + server.bindAddress().getHostAddress() + ":" + server.port()
+                    + " can connect. Use only on a trusted network.");
+        }
+        out.flush();
+        server.await();
+        return 0;
+    }
+
     // ----- shared -----
 
     private static HeadlessGame buildGame(String spec, PrintStream err) {
@@ -544,40 +609,14 @@ public final class CliMain {
                 err.println("Bad budget: " + parts[2]);
                 return null;
             }
-            World world = buildWorld(p.id());
-            return HeadlessGame.fromMap(world, budget,
-                    MapStructures.forPreset(p.id(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT, idSource()));
+            return HeadlessGame.forMap(p.id(), budget);
         }
         int idx = resolveLevelIndex(spec);
         if (idx < 0) {
             err.println("Unknown level/map: " + spec);
             return null;
         }
-        Level lv = Levels.all().get(idx);
-        World world = buildWorld(lv.mapId());
-        HeadlessGame game = HeadlessGame.fromMap(world, lv.playerBudget(),
-                MapStructures.forPreset(lv.mapId(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT, idSource()));
-        for (Map.Entry<UnitType, Integer> e : lv.playerCaps().entrySet()) {
-            game.setPlayerCap(e.getKey(), e.getValue());
-        }
-        lv.spawner().spawn(game.enemy(), game.state(), HeadlessGame.WIDTH, HeadlessGame.HEIGHT);
-        return game;
-    }
-
-    private static World buildWorld(String mapId) {
-        MapPreset p = Maps.byId(mapId);
-        int cols = (int) Math.ceil((double) HeadlessGame.WIDTH / HeadlessGame.TILE);
-        int rows = (int) Math.ceil((double) HeadlessGame.HEIGHT / HeadlessGame.TILE);
-        Terrain.TileType[][] tiles = (p == null) ? null : p.generator().generate(cols, rows);
-        if (tiles == null) {
-            return World.battlefield(HeadlessGame.WIDTH, HeadlessGame.HEIGHT, HeadlessGame.TILE);
-        }
-        return new World(HeadlessGame.WIDTH, HeadlessGame.HEIGHT, HeadlessGame.TILE, tiles);
-    }
-
-    private static java.util.function.Supplier<Long> idSource() {
-        long[] seed = {-1L};
-        return () -> seed[0]--;
+        return HeadlessGame.forLevel(Levels.all().get(idx));
     }
 
     private static UnitType parseUnitType(Object o) {

@@ -123,6 +123,38 @@ For campaign specs the enemy is auto-spawned from the level's spawner; pass `--b
 bin/bloodfields-cli sim 1 --red=examples/red.json
 ```
 
+### `telnet [--port=N] [--sessions=N]`
+
+Starts a Commodore 64 telnet server that serves the game in PETSCII (40x25
+color text mode). Lives in `com.github.rzo1.bloodfields.telnet`. Default port
+is 6400; `--sessions` caps concurrent players (default 8).
+
+```bash
+java -cp target/bloodfields-1.2.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain telnet --port=6400
+```
+
+Connect from a C64 with a PETSCII terminal program (CCGMS, StrikeTerm) and a
+telnet-capable link (WiFi modem cartridge, RR-Net, or an emulator's RS-232
+bridge). The server renders the battlefield as a 40x23 PETSCII minimap with
+color-coded armies, a 2-line HUD, and full menu/deployment/battle flow —
+campaign (all 11 levels, level codes on victory) and skirmish against the
+bot. Controls: cursor keys + SPACE/DEL in deployment, `1`-`4` speed, `P`
+pause, `Q` resign in battle.
+
+The rendering layer (`PetsciiScreen`) sends only rows that changed between
+frames, which keeps the game playable over slow links (9600 baud and up).
+Weather multipliers are display-only here, matching the rest of the CLI.
+
+Captured from a live session (PETSCII stream rendered with the C64 palette):
+
+| | |
+| --- | --- |
+| ![Main menu](screenshots/c64/01-menu.png) | ![Deployment](screenshots/c64/09-deployment-fortress.png) |
+| ![Battle](screenshots/c64/11-battle-fortress-mid.png) | ![Result](screenshots/c64/12-result.png) |
+
+The full set of screens (menu, help, level select, unit keys, deployment,
+battle, result, goodbye) is in [`docs/screenshots/c64/`](screenshots/c64/).
+
 ## Notes
 
 - The CLI is JavaFX-free and lives in `com.github.rzo1.bloodfields.cli`. It reuses `model/`, `engine/`, and `ai/`.

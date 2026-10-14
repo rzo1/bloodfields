@@ -143,6 +143,21 @@ class CliMainTest {
         assertTrue(c.err.contains("Unknown"));
     }
 
+    @Test
+    void helpListsTelnetServer() {
+        Captured c = run(new String[]{"help"});
+        assertEquals(0, c.exitCode);
+        assertTrue(c.out.contains("telnet"));
+    }
+
+    @Test
+    void telnetRejectsBadFlags() {
+        Captured c = run(new String[]{"telnet", "--port=abc"});
+        assertEquals(2, c.exitCode);
+        Captured c2 = run(new String[]{"telnet", "--bogus"});
+        assertEquals(2, c2.exitCode);
+    }
+
     private static Captured run(String[] args) {
         return run(args, "");
     }
