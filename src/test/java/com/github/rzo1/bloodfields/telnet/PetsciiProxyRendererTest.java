@@ -203,9 +203,9 @@ class PetsciiProxyRendererTest {
         // A wall stub sits on the zone row at column 0.
         LobbyState lb = lobby("........................................",
                 List.of(structure(StructureKind.WALL, 0, 400, 32, 8)));
-        PetsciiProxyRenderer.renderDeployment(scr, lb, dep, Faction.RED, 5, 5, "HUD1", "HUD2");
+        PetsciiProxyRenderer.renderDeployment(scr, lb, dep, Faction.RED, 5, 5, 0, "HUD1", "HUD2");
 
-        int zr = (int) (400.0 / (800.0 / ROWS));
+        int zr = 12; // tile-exact: y=400 is tile row 12
         for (int c = 0; c < COLS; c += 2) {
             if (c == 0) {
                 assertEquals(Petscii.BLOCK, scr.glyphAt(c, zr), "structure cell keeps its glyph");
@@ -229,12 +229,12 @@ class PetsciiProxyRendererTest {
                 .setBlueZone(rect(0, 0, 1280, 400))
                 .build();
         PetsciiProxyRenderer.renderDeployment(scr,
-                lobby("........................................"), dep, Faction.BLUE, 5, 5, "H", "H");
+                lobby("........................................"), dep, Faction.BLUE, 5, 5, 0, "H", "H");
         // paintZone picks the zone edge facing the enemy: for BLUE's top-half
-        // zone that is maxY=400, the contested middle line (row 11).
-        assertEquals((byte) '-', scr.glyphAt(0, 11));
-        assertEquals((byte) '-', scr.glyphAt(2, 11));
-        assertEquals(Petscii.LIGHT_GREEN, scr.colorAt(2, 11));
+        // zone that is maxY=400, the contested middle line (tile row 12).
+        assertEquals((byte) '-', scr.glyphAt(0, 12));
+        assertEquals((byte) '-', scr.glyphAt(2, 12));
+        assertEquals(Petscii.LIGHT_GREEN, scr.colorAt(2, 12));
         assertEquals((byte) '.', scr.glyphAt(0, 0), "map edge has no dashes for BLUE");
     }
 
@@ -245,9 +245,9 @@ class PetsciiProxyRendererTest {
         PetsciiScreen scr = new PetsciiScreen();
         BattleState st = BattleState.newBuilder()
                 .addUnits(unit(UnitKind.INFANTRY,
-                        com.github.rzo1.bloodfields.net.proto.Faction.RED, 16, 16, 100, 100))
+                        com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, 16, 16, 100, 100))
                 .addUnits(unit(UnitKind.CAVALRY,
-                        com.github.rzo1.bloodfields.net.proto.Faction.BLUE, 48, 16, 80, 80))
+                        com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE, 48, 16, 80, 80))
                 .build();
         PetsciiProxyRenderer.renderBattle(scr, lobby("........................................"),
                 st, "H1", "H2");
@@ -262,9 +262,9 @@ class PetsciiProxyRendererTest {
         PetsciiScreen scr = new PetsciiScreen();
         BattleState st = BattleState.newBuilder()
                 .addUnits(unit(UnitKind.INFANTRY,
-                        com.github.rzo1.bloodfields.net.proto.Faction.RED, 16, 16, 50, 100))
+                        com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, 16, 16, 50, 100))
                 .addUnits(unit(UnitKind.INFANTRY,
-                        com.github.rzo1.bloodfields.net.proto.Faction.BLUE, 48, 16, 25, 100))
+                        com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE, 48, 16, 25, 100))
                 .build();
         PetsciiProxyRenderer.renderBattle(scr, lobby("........................................"),
                 st, "H1", "H2");
@@ -276,7 +276,7 @@ class PetsciiProxyRendererTest {
     void routedUnitRendersWhite() {
         PetsciiScreen scr = new PetsciiScreen();
         UnitInfo u = unit(UnitKind.INFANTRY,
-                com.github.rzo1.bloodfields.net.proto.Faction.RED, 16, 16, 100, 100)
+                com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, 16, 16, 100, 100)
                 .toBuilder().setRouted(true).build();
         BattleState st = BattleState.newBuilder().addUnits(u).build();
         PetsciiProxyRenderer.renderBattle(scr, lobby("........................................"),
@@ -288,7 +288,7 @@ class PetsciiProxyRendererTest {
     void burningUnitRendersYellow() {
         PetsciiScreen scr = new PetsciiScreen();
         UnitInfo u = unit(UnitKind.INFANTRY,
-                com.github.rzo1.bloodfields.net.proto.Faction.RED, 16, 16, 30, 100)
+                com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, 16, 16, 30, 100)
                 .toBuilder().setBurning(true).build();
         BattleState st = BattleState.newBuilder().addUnits(u).build();
         PetsciiProxyRenderer.renderBattle(scr, lobby("........................................"),
@@ -300,13 +300,13 @@ class PetsciiProxyRendererTest {
     void deadAndGarrisonedUnitsAreSkipped() {
         PetsciiScreen scr = new PetsciiScreen();
         UnitInfo dead = unit(UnitKind.INFANTRY,
-                com.github.rzo1.bloodfields.net.proto.Faction.RED, 16, 16, 0, 100)
+                com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, 16, 16, 0, 100)
                 .toBuilder().setAlive(false).build();
         UnitInfo garrisoned = unit(UnitKind.ARCHER,
-                com.github.rzo1.bloodfields.net.proto.Faction.BLUE, 48, 16, 100, 100)
+                com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE, 48, 16, 100, 100)
                 .toBuilder().setGarrisoned(true).build();
         UnitInfo alive = unit(UnitKind.MAGE,
-                com.github.rzo1.bloodfields.net.proto.Faction.RED, 80, 16, 100, 100);
+                com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, 80, 16, 100, 100);
         BattleState st = BattleState.newBuilder()
                 .addUnits(dead).addUnits(garrisoned).addUnits(alive).build();
         PetsciiProxyRenderer.renderBattle(scr, lobby("........................................"),
@@ -347,7 +347,7 @@ class PetsciiProxyRendererTest {
     void fireTilesFlickerWithTickParity() {
         LobbyState lb = lobby("........................................");
         Tile fire = Tile.newBuilder().setCol(5).setRow(10).build();
-        int fireRow = 10 * ROWS / 25; // plotTile maps 25 world rows onto 23 board rows
+        int fireRow = 10; // tile-exact: tile row 10 at screen row 10 (offset 0)
 
         PetsciiScreen even = new PetsciiScreen();
         PetsciiProxyRenderer.renderBattle(even, lb,
@@ -371,7 +371,7 @@ class PetsciiProxyRendererTest {
     void scorchedTileRendersDarkGreyColon() {
         PetsciiScreen scr = new PetsciiScreen();
         Tile scorched = Tile.newBuilder().setCol(7).setRow(5).build();
-        int r = 5 * ROWS / 25;
+        int r = 5; // tile-exact
         BattleState st = BattleState.newBuilder().addScorched(scorched).build();
         PetsciiProxyRenderer.renderBattle(scr, lobby("........................................"),
                 st, "H1", "H2");
@@ -384,7 +384,7 @@ class PetsciiProxyRendererTest {
         PetsciiScreen scr = new PetsciiScreen();
         CorpseInfo corpse = CorpseInfo.newBuilder()
                 .setX(16).setY(16)
-                .setFaction(com.github.rzo1.bloodfields.net.proto.Faction.RED)
+                .setFaction(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED)
                 .setType(UnitKind.INFANTRY)
                 .build();
         BattleState st = BattleState.newBuilder().addCorpses(corpse).build();
@@ -419,10 +419,10 @@ class PetsciiProxyRendererTest {
                 .setBlueZone(rect(0, 0, 1280, 400))
                 .build();
         int curC = 10;
-        int curR = 12;
+        int curR = 13; // below the zone-dash row, plain grass
         PetsciiProxyRenderer.renderDeployment(scr,
                 lobby("........................................"), dep, Faction.RED,
-                curC, curR, "H", "H");
+                curC, curR, 0, "H", "H");
         assertEquals((byte) '.', scr.glyphAt(curC, curR), "underlying grass glyph kept");
         assertEquals(Petscii.GREEN, scr.colorAt(curC, curR), "underlying color kept");
         assertTrue(scr.rvsAt(curC, curR), "cursor cell is reverse video");
@@ -496,7 +496,7 @@ class PetsciiProxyRendererTest {
         for (int i = 0; i < COLS; i++) hud.append((char) ('A' + i % 26));
         BattleState st = BattleState.newBuilder()
                 .addUnits(unit(UnitKind.INFANTRY,
-                        com.github.rzo1.bloodfields.net.proto.Faction.RED, 1270, 780, 10, 100))
+                        com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, 1270, 780, 10, 100))
                 .addFires(Tile.newBuilder().setCol(39).setRow(24).build())
                 .addScorched(Tile.newBuilder().setCol(38).setRow(24).build())
                 .setTick(3)

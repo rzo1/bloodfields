@@ -105,6 +105,11 @@ public final class Army {
         caps.put(type, max);
     }
 
+    /** Explicitly set per-type caps (unmodifiable copy; empty = unlimited). */
+    public Map<UnitType, Integer> caps() {
+        return caps.isEmpty() ? Map.of() : Collections.unmodifiableMap(new EnumMap<>(caps));
+    }
+
     public int capFor(UnitType type) {
         if (type == null) return Integer.MAX_VALUE;
         Integer v = caps.get(type);

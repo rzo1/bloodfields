@@ -1,5 +1,6 @@
 package com.github.rzo1.bloodfields.telnet;
 
+import com.github.rzo1.bloodfields.engine.BattleDriver;
 import com.github.rzo1.bloodfields.ai.SkirmishBot;
 import com.github.rzo1.bloodfields.cli.HeadlessGame;
 import com.github.rzo1.bloodfields.model.Army;
@@ -50,12 +51,6 @@ public final class TelnetSession implements Runnable {
     private static final long FRAME_MS = 700;
     private static final long FLASH_NANOS = 2_500_000_000L;
 
-    private static final char[] UNIT_KEYS = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'G'};
-    private static final UnitType[] UNIT_TYPES = {
-            UnitType.INFANTRY, UnitType.ARCHER, UnitType.CAVALRY, UnitType.MAGE,
-            UnitType.NECROMANCER, UnitType.HEALER, UnitType.CATAPULT, UnitType.ASSASSIN,
-            UnitType.GOLEM, UnitType.PIKEMAN, UnitType.GENERAL
-    };
 
     private static final int MIN_BUDGET = 100;
     private static final int MAX_BUDGET = 10000;
@@ -116,27 +111,7 @@ public final class TelnetSession implements Runnable {
     // ----- telnet + petscii plumbing -----
 
     private void negotiate() throws IOException {
-        // WILL BINARY + DO BINARY: PETSCII lives above 0x7F, and telnet
-        // defaults to NVT ASCII — without BINARY (RFC 856) standard clients
-        // may translate or strip those bytes. WILL ECHO + WILL/DO SGA give
-        // character-at-a-time input with no client local echo. IacFilter
-        // knows these offers and treats the client's DO/WILL replies as
-        // acknowledgements instead of withdrawing them.
-        writeIac(IacFilter.WILL, IacFilter.OPT_BINARY);
-        writeIac(IacFilter.DO, IacFilter.OPT_BINARY);
-        writeIac(IacFilter.WILL, IacFilter.OPT_ECHO);
-        writeIac(IacFilter.WILL, IacFilter.OPT_SGA);
-        writeIac(IacFilter.DO, IacFilter.OPT_SGA);
-        out.write(Petscii.CLEAR);
-        out.write(Petscii.UPPERCASE_MODE);
-        out.write(Petscii.WHITE);
-        out.flush();
-    }
-
-    private void writeIac(int cmd, int option) throws IOException {
-        out.write(IacFilter.IAC);
-        out.write(cmd);
-        out.write(option);
+        SessionCommon.negotiate(out);
     }
 
     private void present() throws IOException {
@@ -530,20 +505,17 @@ public final class TelnetSession implements Runnable {
     }
 
     private static UnitType typeForKey(int k) {
-        for (int i = 0; i < UNIT_KEYS.length; i++) {
-            if (UNIT_KEYS[i] == k) return UNIT_TYPES[i];
-        }
-        return null;
+        return SessionCommon.typeForKey(k);
     }
 
     private void showUnitKeys() throws IOException {
         screen.clear((byte) ' ', Petscii.WHITE);
         screen.center(1, "UNIT KEYS", Petscii.LIGHT_RED);
-        for (int i = 0; i < UNIT_KEYS.length; i++) {
-            UnitType t = UNIT_TYPES[i];
+        for (int i = 0; i < SessionCommon.UNIT_KEYS.length; i++) {
+            UnitType t = SessionCommon.UNIT_TYPES[i];
             int col = (i % 2) == 0 ? 2 : 21;
             int row = 3 + i / 2;
-            screen.text(col, row, UNIT_KEYS[i] + " " + t.displayName().toUpperCase()
+            screen.text(col, row, SessionCommon.UNIT_KEYS[i] + " " + t.displayName().toUpperCase()
                     + " " + t.cost() + "P", Petscii.WHITE);
         }
         screen.center(11, "GENERAL CARRIES THE HERO SKILL.", Petscii.GREY);
@@ -632,10 +604,7 @@ public final class TelnetSession implements Runnable {
     }
 
     private static String mmss(double simSeconds) {
-        long t = (long) simSeconds;
-        long m = t / 60;
-        long s = t % 60;
-        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+        return SessionCommon.mmss(simSeconds);
     }
 
 }

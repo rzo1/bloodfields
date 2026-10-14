@@ -1,7 +1,6 @@
-package com.github.rzo1.bloodfields.telnet;
+package com.github.rzo1.bloodfields.engine;
 
 import com.github.rzo1.bloodfields.cli.HeadlessGame;
-import com.github.rzo1.bloodfields.engine.CorpseTracker;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.ui.SpeedControl;
@@ -10,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Drives a real-time battle for one telnet session: wall-clock elapsed time
+ * Drives a real-time battle for one frontend session (telnet, gRPC, ...): wall-clock elapsed time
  * is converted to 60 Hz sim ticks scaled by the player's chosen speed.
  *
  * <p>Speed and pause reuse the GUI's {@link SpeedControl} (the driver only
@@ -53,7 +52,7 @@ public final class BattleDriver {
         deaths.prime(allUnits());
     }
 
-    /** Selects speed by telnet key index: 0=0.5x, 1=1x, 2=2x, 3=4x. Ignores bad indices. */
+    /** Selects speed by key index: 0=0.5x, 1=1x, 2=2x, 3=4x. Ignores bad indices. */
     public void setSpeedIndex(int idx) {
         if (idx >= 0 && idx < BY_INDEX.length) {
             speedIndex = idx;

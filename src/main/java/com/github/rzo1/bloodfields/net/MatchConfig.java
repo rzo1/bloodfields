@@ -5,7 +5,7 @@ import com.github.rzo1.bloodfields.ui.Maps;
 /**
  * Immutable-by-convention match setup: map preset, per-side deployment
  * budget, and whether DRAGON placements are allowed. The RED player (host)
- * edits this in the lobby; it is carried into every {@link Snapshot} so a
+ * edits this in the lobby; it is carried into every {@link com.github.rzo1.bloodfields.net.proto.Snapshot} so a
  * restored match rebuilds with the same setup.
  */
 public final class MatchConfig {

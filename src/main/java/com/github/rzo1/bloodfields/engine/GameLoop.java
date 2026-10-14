@@ -31,6 +31,11 @@ public final class GameLoop {
         return state;
     }
 
+    /** The per-unit updater (usually the AI); exposed for snapshot RNG continuity. */
+    public UnitUpdater updater() {
+        return updater;
+    }
+
     public void step(double dtSeconds) {
         state.tick++;
         if (state.recorder != null) {

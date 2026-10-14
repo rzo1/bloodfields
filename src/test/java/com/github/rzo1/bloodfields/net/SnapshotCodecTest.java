@@ -176,7 +176,7 @@ class SnapshotCodecTest {
 
         Snapshot snap = SnapshotCodec.capture(game, new MatchConfig("fortress_wall", 1000, false),
                 Phase.ENDED);
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.RED, snap.getWinner());
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, snap.getWinner());
 
         HeadlessGame g2 = SnapshotCodec.restore(snap);
         assertEquals(GameState.Phase.RESULT, g2.state().phase);
@@ -210,7 +210,7 @@ class SnapshotCodecTest {
         assertThrows(IllegalArgumentException.class, () -> SnapshotCodec.restore(lobby));
 
         Snapshot future = Snapshot.newBuilder()
-                .setVersion(2)
+                .setVersion(99)
                 .setPhase(Phase.DEPLOY)
                 .build();
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,

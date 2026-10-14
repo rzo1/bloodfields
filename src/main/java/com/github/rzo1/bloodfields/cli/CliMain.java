@@ -15,6 +15,7 @@ import com.github.rzo1.bloodfields.ui.MapPreset;
 import com.github.rzo1.bloodfields.ui.Maps;
 import com.github.rzo1.bloodfields.telnet.TelnetServer;
 import com.github.rzo1.bloodfields.net.GrpcMatchServer;
+import com.github.rzo1.bloodfields.net.SnapshotSigner;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -101,6 +102,9 @@ public final class CliMain {
         out.println("  grpc-server           Start the 2-player gRPC match server.");
         out.println("    --port=N            Listen port (default "
                 + GrpcMatchServer.DEFAULT_PORT + ").");
+        out.println("    --bind=ADDR         Bind address (default 127.0.0.1; 0.0.0.0 serves the LAN).");
+        out.println("    --snapshot-key=S    Stable seal key so restores survive restarts");
+        out.println("                        (or env BLOODFIELD_SNAPSHOT_KEY).");
         out.println("  help                  This message.");
         out.println();
         out.println("Play commands (one JSON object per line):");
@@ -628,6 +632,9 @@ public final class CliMain {
 
     private static int grpcServer(String[] args, PrintStream out, PrintStream err) {
         int port = GrpcMatchServer.DEFAULT_PORT;
+        InetAddress bind = null;
+        String snapshotKey = System.getenv("BLOODFIELD_SNAPSHOT_KEY");
+        if (snapshotKey != null && snapshotKey.isEmpty()) snapshotKey = null;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--port=")) {
@@ -635,6 +642,19 @@ public final class CliMain {
                     port = Integer.parseInt(a.substring(7));
                 } catch (NumberFormatException nfe) {
                     err.println("Bad --port: " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--bind=")) {
+                try {
+                    bind = InetAddress.getByName(a.substring(7));
+                } catch (UnknownHostException uhe) {
+                    err.println("Bad --bind: " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--snapshot-key=")) {
+                snapshotKey = a.substring(15);
+                if (snapshotKey.isEmpty()) {
+                    err.println("Bad --snapshot-key: " + a);
                     return 2;
                 }
             } else {
@@ -646,16 +666,28 @@ public final class CliMain {
             err.println("Bad --port: " + port);
             return 2;
         }
-        GrpcMatchServer server =
-                new GrpcMatchServer(port);
+        SnapshotSigner signer = snapshotKey == null
+                ? new SnapshotSigner()
+                : new SnapshotSigner(snapshotKey);
+        GrpcMatchServer server = new GrpcMatchServer(bind, port, signer);
         try {
             server.start();
         } catch (java.io.IOException ex) {
             err.println("Error: " + ex.getMessage());
             return 1;
         }
-        out.println("Bloodfield gRPC match server on port " + server.port()
+        out.println("Bloodfield gRPC match server on "
+                + server.bindAddress().getHostAddress() + ":" + server.port()
                 + ". Press Ctrl+C to stop.");
+        if (!server.bindAddress().isLoopbackAddress()) {
+            out.println("WARNING: plaintext gRPC with no authentication — anyone who can reach "
+                    + server.bindAddress().getHostAddress() + ":" + server.port()
+                    + " can join or spectate. Use only on a trusted network.");
+        }
+        if (snapshotKey == null) {
+            out.println("Snapshot seals are ephemeral (restores work until this server stops); "
+                    + "set --snapshot-key or BLOODFIELD_SNAPSHOT_KEY for seals that survive restarts.");
+        }
         out.flush();
         server.blockUntilShutdown();
         return 0;

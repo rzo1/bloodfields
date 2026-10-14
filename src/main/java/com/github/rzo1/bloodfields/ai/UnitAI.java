@@ -55,12 +55,41 @@ public final class UnitAI implements UnitUpdater {
         }
     }
 
+    /** Random that counts its LCG steps, so snapshots can resume the sequence. */
+    static final class CountingRandom extends Random {
+        private long draws;
+        CountingRandom(long seed) { super(seed); }
+        @Override protected int next(int bits) {
+            draws++;
+            return super.next(bits);
+        }
+        long draws() { return draws; }
+    }
+
     private Random pokeRng(GameState state) {
         if (!pokeRngSeeded) {
-            this.pokeRng = state != null ? state.rng("ai.poke") : new Random(0xC0FFEEL);
+            // Same sequence as state.rng("ai.poke"), but step-counted.
+            this.pokeRng = new CountingRandom(state != null ? state.rngSeedFor("ai.poke") : 0xC0FFEEL);
             this.pokeRngSeeded = true;
         }
         return pokeRng;
+    }
+
+    /** LCG steps the poke RNG has taken (0 unless it is the counting kind). */
+    public long pokeDraws() {
+        return pokeRng instanceof CountingRandom c ? c.draws() : 0;
+    }
+
+    /**
+     * Rebuilds the poke RNG for {@code state} and replays {@code draws} LCG
+     * steps, landing exactly where a snapshot left the sequence (each
+     * {@code next(bits)} call is one LCG step regardless of bit count).
+     */
+    public void fastForwardPokeRng(GameState state, long draws) {
+        CountingRandom fresh = new CountingRandom(state != null ? state.rngSeedFor("ai.poke") : 0xC0FFEEL);
+        for (long i = 0; i < draws; i++) fresh.next(1);
+        this.pokeRng = fresh;
+        this.pokeRngSeeded = true;
     }
 
     List<double[]> pathFor(Unit u) {

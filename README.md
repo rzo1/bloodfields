@@ -182,17 +182,33 @@ Match flow: both players join → lobby (first player configures map, budget,
 dragons; both ready-up) → deployment (each side places into its own half of
 the field) → real-time battle streamed at ~4 Hz (either side can set speed,
 pause, or resign) → result → rematch vote. **Both sides can save and restore
-state**: a save request snapshots the full match and delivers the bytes to
-*both* players; either player can later push a snapshot back to resume the
-match from it (mid-battle included).
+state**: a save request snapshots the full match — units, projectiles,
+corpses, fires, structures, per-side caps/stats, even AI RNG continuity —
+seals it with the server's HMAC key, and delivers the bytes to *both*
+players. Restoring is a **parley**: one side proposes, the other must consent
+(telnet: `7`/`8`), so nobody can unilaterally rewind a losing battle;
+forged or foreign snapshots fail the seal check and field validation before
+they touch the engine. Saves/restores are rate-limited, frames coalesce for
+slow readers instead of queueing without bound, and a dropped player can
+reclaim their seat mid-battle with the reconnect token from their `Welcome`
+(strangers cannot). Up to eight extra streams may **spectate** (`spectate`
+on join): spectators receive every frame, save/restore event, and herald
+notice ("A DRAGON HAS FALLEN") but their commands are rejected.
 
-The contract is one file, [`src/main/proto/bloodfield.proto`](src/main/proto/bloodfield.proto),
-and any gRPC client can play. The telnet server proxies it, so two C64s can
-fight each other over the internet:
+The wire is **plaintext and unauthenticated** — tokens and snapshot seals
+guard seats and scrolls, not the connection. The server binds to loopback by
+default; serving beyond this machine is explicit (`--bind=0.0.0.0`) and
+should happen only on a trusted network. Snapshot seals are ephemeral by
+default (they die with the server); pass `--snapshot-key=...` (or set
+`BLOODFIELD_SNAPSHOT_KEY`) for seals that survive restarts.
+
+The contract is one file, [`src/main/proto/bloodfield.proto`](src/main/proto/bloodfield.proto)
+(package `bloodfields.v1`), and any gRPC client can play. The telnet server
+proxies it, so two C64s can fight each other over the internet:
 
 ```bash
-# machine A hosts the match
-java -cp ... CliMain grpc-server --port=6411
+# machine A hosts the match (LAN play)
+java -cp ... CliMain grpc-server --port=6411 --bind=0.0.0.0
 # machine A (or anywhere) serves PETSCII sessions bridged to the match
 java -cp ... CliMain telnet --port=6400 --proxy=hostA:6411
 ```

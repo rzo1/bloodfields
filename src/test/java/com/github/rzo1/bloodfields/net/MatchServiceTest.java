@@ -283,7 +283,7 @@ class MatchServiceTest {
         red.send(PlayerMessage.newBuilder().setBattle(BattleControl.newBuilder()
                 .setCommand(BattleControl.Command.RESIGN)));
         GameMessage result = await(blue, m -> m.hasResult());
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.BLUE, result.getResult().getWinner());
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_BLUE, result.getResult().getWinner());
         assertFalse(result.getResult().getDraw());
         assertEquals("ann", result.getResult().getResignedBy());
         assertEquals(1, result.getResult().getRedLeft());
@@ -316,6 +316,9 @@ class MatchServiceTest {
 
         red.send(PlayerMessage.newBuilder()
                 .setRestore(RestoreGame.newBuilder().setSnapshot(saved.getSaved().getSnapshot())));
+        await(blue, m -> m.hasRestoreProposed());
+        blue.send(PlayerMessage.newBuilder().setConsentRestore(
+                com.github.rzo1.bloodfields.net.proto.ConsentRestore.newBuilder().setAccept(true)));
         GameMessage restored = await(blue, m -> m.hasRestored());
         assertEquals(Phase.BATTLE, restored.getRestored().getPhase());
         assertEquals("ann", restored.getRestored().getRestoredBy());
@@ -325,7 +328,7 @@ class MatchServiceTest {
         blue.send(PlayerMessage.newBuilder().setBattle(BattleControl.newBuilder()
                 .setCommand(BattleControl.Command.RESIGN)));
         GameMessage result = await(red, m -> m.hasResult());
-        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.RED, result.getResult().getWinner());
+        assertEquals(com.github.rzo1.bloodfields.net.proto.Faction.FACTION_RED, result.getResult().getWinner());
     }
 
     @Test
@@ -341,6 +344,10 @@ class MatchServiceTest {
 
         red.send(PlayerMessage.newBuilder()
                 .setRestore(RestoreGame.newBuilder().setSnapshot(saved.getSaved().getSnapshot())));
+        GameClient blue = both[1];
+        await(blue, m -> m.hasRestoreProposed());
+        blue.send(PlayerMessage.newBuilder().setConsentRestore(
+                com.github.rzo1.bloodfields.net.proto.ConsentRestore.newBuilder().setAccept(true)));
         GameMessage restored = await(red, m -> m.hasRestored());
         assertEquals(Phase.DEPLOY, restored.getRestored().getPhase());
         GameMessage deploy = await(red, m -> m.hasDeploy());

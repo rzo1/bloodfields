@@ -225,8 +225,32 @@ class ProxySessionTest {
                                 "save flash from SaveEvent");
                         keys.write('6');
                         keys.flush();
-                        assertContains(readUntil(in, "FIELD RESTORED"), "FIELD RESTORED",
-                                "restore flash from RestoredEvent");
+                        // Restore is a parley now: BLUE must consent.
+                        await(blue, m -> m.hasRestoreProposed());
+                        blue.send(PlayerMessage.newBuilder().setConsentRestore(
+                                com.github.rzo1.bloodfields.net.proto.ConsentRestore.newBuilder()
+                                        .setAccept(true)));
+                        // Diff rendering may split HUD text with cursor
+                        // bytes where old and new flash share a letter, so
+                        // search control-stripped bytes for this token.
+                        {
+                            StringBuilder seen = new StringBuilder();
+                            long dl = System.currentTimeMillis() + 15000;
+                            byte[] chunk = new byte[512];
+                            boolean found = false;
+                            while (System.currentTimeMillis() < dl && !found) {
+                                int r = in.read(chunk);
+                                if (r < 0) break;
+                                for (int i = 0; i < r; i++) {
+                                    if (chunk[i] >= 32 && chunk[i] < 127) seen.append((char) chunk[i]);
+                                }
+                                // The shared 'L' of PARLEY/FIELD is never
+                                // re-sent at all: search the distinctive tail.
+                                found = seen.toString().contains("D RESTORED");
+                            }
+                            org.junit.jupiter.api.Assertions.assertTrue(found,
+                                    "restore flash from RestoredEvent; saw: " + seen);
+                        }
 
                         // RED resigns through the proxy -> BLUE wins.
                         keys.write('Q');

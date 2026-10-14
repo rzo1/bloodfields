@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package bloodfields;
+package bloodfields.v1;
 
 option java_multiple_files = true;
 option java_package = "com.github.rzo1.bloodfields.net.proto";
@@ -18,8 +18,9 @@ service Bloodfield {
 
 enum Faction {
   FACTION_UNSPECIFIED = 0;
-  RED = 1;
-  BLUE = 2;
+  FACTION_RED = 1;
+  FACTION_BLUE = 2;
+  reserved 3 to 10;
 }
 
 enum Phase {
@@ -28,6 +29,7 @@ enum Phase {
   DEPLOY = 2;   // both players place their armies
   BATTLE = 3;   // simulation running (server-driven)
   ENDED = 4;    // result known; restore or rematch from here
+  reserved 5 to 10;
 }
 
 enum UnitKind {
@@ -74,12 +76,21 @@ message PlayerMessage {
     SetReady set_ready = 6;      // lobby + deploy + ended (rematch)
     BattleControl battle = 7;    // battle phase
     SaveGame save = 8;           // any phase except lobby
-    RestoreGame restore = 9;     // pushes a snapshot received earlier
+    RestoreGame restore = 9;     // proposes restoring a snapshot (parley)
+    ConsentRestore consent_restore = 10;  // answer to a RestoreProposedEvent
   }
+  reserved 11 to 20;
 }
 
 message Join {
   string player_name = 1;        // display only; may be empty
+  // Reconnect token from a previous Welcome: reclaims a disconnected
+  // seat (any phase) instead of being turned away or stealing a seat.
+  string reconnect_token = 2;
+  // Join the gallery instead of a seat: spectators receive every frame
+  // and event but their commands are rejected.
+  bool spectate = 3;
+  reserved 4 to 10;
 }
 
 message Configure {
@@ -124,7 +135,13 @@ message SaveGame {
 }
 
 message RestoreGame {
-  bytes snapshot = 1;            // a Snapshot message previously received
+  bytes snapshot = 1;            // a sealed Snapshot received on SaveEvent
+}
+
+// Restore is a parley: one side proposes, the other consents (or not).
+// Unilateral rewinds of a losing battle are not a thing.
+message ConsentRestore {
+  bool accept = 1;
 }
 
 // ---------------------------------------------------------------- server ->
@@ -139,13 +156,20 @@ message GameMessage {
     SaveEvent saved = 6;           // snapshot bytes, sent to BOTH players
     RestoredEvent restored = 7;    // a snapshot was applied
     ErrorEvent error = 8;          // rejected action (stream stays open)
+    RestoreProposedEvent restore_proposed = 9;  // opponent asks to restore
+    NoticeEvent notice = 10;       // herald's cry: notable battle events
   }
+  reserved 11 to 20;
 }
 
 message Welcome {
-  Faction your_faction = 1;
+  Faction your_faction = 1;      // FACTION_UNSPECIFIED for spectators
   Phase phase = 2;               // phase the match is currently in
   string server_name = 3;
+  // Present this token on a later Join to reclaim this seat after a drop.
+  string reconnect_token = 4;
+  bool spectator = 5;
+  reserved 6 to 10;
 }
 
 message PlayerInfo {
@@ -275,13 +299,24 @@ message ErrorEvent {
   string reason = 1;
 }
 
+message RestoreProposedEvent {
+  string proposed_by = 1;
+  Phase phase = 2;               // phase the snapshot would restore to
+  double sim_time = 3;
+}
+
+// Short human-readable battle news ("A DRAGON HAS FALLEN"), for HUDs.
+message NoticeEvent {
+  string text = 1;
+}
+
 // ---------------------------------------------------------------- snapshot
 
 // Full match state. Bytes are produced by the server on SaveGame and
 // accepted back via RestoreGame. Opaque to clients: persist or transfer
 // as-is. Versioned so future format changes can be rejected cleanly.
 message Snapshot {
-  int32 version = 1;             // currently 1
+  int32 version = 1;             // currently 2
   string map_id = 2;
   int32 budget = 3;
   bool dragons = 4;
@@ -300,6 +335,23 @@ message Snapshot {
   repeated Tile scorched = 17;
   repeated StructureState structures = 18;
   repeated string player_names = 19;  // informational
+  // HMAC-SHA256 over this message with this field cleared, keyed by the
+  // issuing server. Restores of forged or foreign scrolls are rejected.
+  bytes seal = 20;
+  repeated FactionStats stats = 21;
+  int64 poke_rng_draws = 22;     // ai.poke RNG steps taken (continuity)
+  reserved 23 to 30;
+}
+
+message FactionStats {
+  Faction faction = 1;
+  int32 kills = 2;
+  int32 deaths = 3;
+  double damage_dealt = 4;
+  double damage_received = 5;
+  double biggest_hit = 6;
+  int64 last_fall_tick = 7;
+  repeated int64 credited_kill_ids = 8;
 }
 
 message ArmyState {
@@ -307,6 +359,7 @@ message ArmyState {
   int32 reserve = 2;
   Skill hero_skill = 3;
   double hp_multiplier = 4;
+  map<int32, int32> caps = 5;    // UnitKind number -> per-type cap (if set)
 }
 
 message UnitState {
@@ -328,6 +381,8 @@ message UnitState {
   double burning_damage_per_sec = 16;
   int64 burning_attacker_id = 17;  // 0 = none
   int64 target_id = 18;            // 0 = none
+  int32 model_state = 19;          // model UnitState ordinal (not forced IDLE)
+  reserved 20 to 25;
 }
 
 message ProjectileState {
@@ -339,6 +394,10 @@ message ProjectileState {
   UnitKind attacker_type = 6;
   Faction faction = 7;
   bool alive = 8;
+  int64 target_id = 9;             // homing target, 0 = none (v2)
+  int64 originator_id = 10;        // kill credit, 0 = none (v2)
+  double splash_radius = 11;
+  reserved 12 to 15;
 }
 
 message FireTile {

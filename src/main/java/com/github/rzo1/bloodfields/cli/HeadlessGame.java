@@ -103,9 +103,15 @@ public final class HeadlessGame {
 
     public void setSimTime(double t) { this.simTime = t; }
 
+    private static final ZoneRect BLUE_ZONE = new ZoneRect(0.0, 0.0, WIDTH, HEIGHT / 2.0);
+
+    /**
+     * Deployment zone per faction: RED the bottom half, BLUE the top. Both
+     * rects meet at the midline y = HEIGHT/2; {@link #place} assigns that
+     * shared tile row to RED alone (see there).
+     */
     public ZoneRect zoneFor(Faction f) {
-        if (f == Faction.BLUE) return new ZoneRect(0.0, 0.0, WIDTH, HEIGHT / 2.0);
-        return zone;
+        return f == Faction.BLUE ? BLUE_ZONE : zone;
     }
 
     public void setPlayerCap(UnitType type, int max) {
@@ -146,7 +152,9 @@ public final class HeadlessGame {
         double[] snapped = snap(x, y);
         double sx = snapped[0];
         double sy = snapped[1];
-        if (!z.contains(sx, sy)) {
+        // The midline tile row (centre y == HEIGHT/2) lies in both rects;
+        // it belongs to RED, so BLUE may not deploy on it.
+        if (!z.contains(sx, sy) || (f == Faction.BLUE && sy >= HEIGHT / 2.0)) {
             return PlaceResult.fail("outside deployment zone");
         }
         if (state.world != null && !state.world.passableAt(sx, sy)) {

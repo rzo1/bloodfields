@@ -162,12 +162,12 @@ class CliMainTest {
     @Test
     void telnetProxyRejectsBadTargetAndStartsInProxyMode() throws Exception {
         Captured noColon = run(new String[]{"telnet", "--proxy=localhost"});
-        assertEquals(1, noColon.exitCode);
+        assertEquals(2, noColon.exitCode);
         assertTrue(noColon.err.contains("Bad --proxy"));
         Captured badPort = run(new String[]{"telnet", "--proxy=localhost:abc"});
-        assertEquals(1, badPort.exitCode);
+        assertEquals(2, badPort.exitCode);
         Captured outOfRange = run(new String[]{"telnet", "--proxy=localhost:99999"});
-        assertEquals(1, outOfRange.exitCode);
+        assertEquals(2, outOfRange.exitCode);
         Captured empty = run(new String[]{"telnet", "--proxy="});
         assertEquals(2, empty.exitCode);
 
