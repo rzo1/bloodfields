@@ -20,23 +20,18 @@ import com.github.rzo1.bloodfields.net.proto.Snapshot;
 import com.github.rzo1.bloodfields.net.proto.Welcome;
 import com.github.rzo1.bloodfields.engine.BattleDriver;
 import com.github.rzo1.bloodfields.ui.Maps;
-import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.security.SecureRandom;
 import java.util.HexFormat;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
-import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 
 /**
@@ -80,8 +75,8 @@ public final class Match {
     private long lastBroadcastNanos;
     private Faction endedWinner;
     private String resignedBy;
-    private final SnapshotSigner signer;
-    private final List<Client> spectators = new ArrayList<>();
+    private final SnapshotVault vault;
+    private final List<MatchClient> spectators = new ArrayList<>();
     private PendingRestore pendingRestore;
     private long lastTickNanos;
     private int corpsesSeen;
@@ -102,13 +97,13 @@ public final class Match {
         this.serverName = serverName == null || serverName.isEmpty()
                 ? DEFAULT_SERVER_NAME : serverName;
         this.battlePeriodMs = Math.max(1, battlePeriodMs);
-        this.signer = signer == null ? new SnapshotSigner() : signer;
+        this.vault = new SnapshotVault(signer);
         this.scheduler = Executors.newSingleThreadScheduledExecutor(daemonFactory("bloodfield-match-battle"));
     }
 
     /** Binds a new client stream to this match. The returned observer must receive a Join first. */
     public StreamObserver<PlayerMessage> attach(StreamObserver<GameMessage> out) {
-        final Client client = new Client(out);
+        final MatchClient client = new MatchClient(out);
         return new StreamObserver<PlayerMessage>() {
             @Override
             public void onNext(PlayerMessage msg) {
@@ -144,13 +139,13 @@ public final class Match {
         synchronized (lock) {
             stopLoop();
             for (PlayerSlot slot : slots) {
-                if (slot.client != null) slot.client.close();
+                if (slot.client != null) slot.client.closeConnection();
                 slot.client = null;
                 slot.connected = false;
                 slot.occupied = false;
                 slot.ready = false;
             }
-            for (Client c : spectators) c.close();
+            for (MatchClient c : spectators) c.closeConnection();
             spectators.clear();
             pendingRestore = null;
             scheduler.shutdownNow();
@@ -159,7 +154,7 @@ public final class Match {
 
     // ----- message handling (must hold lock) -----
 
-    private void handle(Client client, PlayerMessage msg) {
+    private void handle(MatchClient client, PlayerMessage msg) {
         if (client.spectator) {
             client.send(GameMessage.newBuilder()
                     .setError(ErrorEvent.newBuilder().setReason("SPECTATORS ONLY WATCH"))
@@ -192,7 +187,7 @@ public final class Match {
         }
     }
 
-    private void join(Client client, com.github.rzo1.bloodfields.net.proto.Join joinMsg) {
+    private void join(MatchClient client, com.github.rzo1.bloodfields.net.proto.Join joinMsg) {
         String name = joinMsg.getPlayerName();
         if (joinMsg.getSpectate()) {
             joinSpectator(client, name);
@@ -248,7 +243,7 @@ public final class Match {
         resync(client);
     }
 
-    private void joinSpectator(Client client, String name) {
+    private void joinSpectator(MatchClient client, String name) {
         if (spectators.size() >= MAX_SPECTATORS) {
             client.fail("GALLERY FULL");
             return;
@@ -265,7 +260,7 @@ public final class Match {
     }
 
     /** Sends the current phase's frame(s) to a freshly joined/reclaimed client. */
-    private void resync(Client client) {
+    private void resync(MatchClient client) {
         switch (phase) {
             case LOBBY -> broadcastLobby();
             case DEPLOY -> broadcastDeploy();
@@ -422,9 +417,7 @@ public final class Match {
             sendError(slot, "SAVE TOO FAST - WAIT A BREATH");
             return;
         }
-        Snapshot snap = signer.seal(
-                SnapshotCodec.capture(game, config, phase, playerNames(), endedWinner));
-        byte[] bytes = snap.toByteArray();
+        byte[] bytes = vault.captureSealed(game, config, phase, playerNames(), endedWinner);
         if (bytes.length > MAX_SNAPSHOT_BYTES) {
             sendError(slot, "SNAPSHOT TOO LARGE: " + bytes.length);
             return;
@@ -444,35 +437,18 @@ public final class Match {
             sendError(slot, "CANNOT RESTORE IN LOBBY");
             return;
         }
-        if (bytes == null || bytes.length == 0 || bytes.length > MAX_SNAPSHOT_BYTES) {
-            sendError(slot, "INVALID SNAPSHOT SIZE");
-            return;
-        }
         if (!slot.tryRestore()) {
             sendError(slot, "RESTORE TOO FAST - WAIT A BREATH");
             return;
         }
         Snapshot snap;
-        try {
-            snap = Snapshot.parseFrom(bytes);
-        } catch (InvalidProtocolBufferException ex) {
-            sendError(slot, "INVALID SNAPSHOT");
-            return;
-        }
-        if (snap.getVersion() != SnapshotCodec.VERSION) {
-            sendError(slot, "UNSUPPORTED SNAPSHOT VERSION " + snap.getVersion());
-            return;
-        }
-        if (!signer.verify(snap)) {
-            // Forged, tampered, or issued by another server: the gate holds.
-            sendError(slot, "SNAPSHOT SEAL NOT RECOGNISED");
-            return;
-        }
         HeadlessGame restored;
         try {
-            restored = SnapshotCodec.restore(snap);
+            snap = vault.verifySealed(bytes);
+            restored = vault.restoreVerified(snap);
         } catch (RuntimeException ex) {
-            sendError(slot, "INVALID SNAPSHOT: " + ex.getMessage());
+            // Forged, tampered, foreign, or malformed: the gate holds.
+            sendError(slot, ex.getMessage());
             return;
         }
         PlayerSlot other = other(slot);
@@ -728,7 +704,7 @@ public final class Match {
         for (PlayerSlot slot : slots) {
             if (slot.connected && slot.client != null) slot.client.sendFrame(msg);
         }
-        for (Client c : spectators) c.sendFrame(msg);
+        for (MatchClient c : spectators) c.sendFrame(msg);
     }
 
     /** Events (result, save, restore, notices): never coalesced away. */
@@ -736,7 +712,7 @@ public final class Match {
         for (PlayerSlot slot : slots) {
             if (slot.connected && slot.client != null) slot.client.send(msg);
         }
-        for (Client c : spectators) c.send(msg);
+        for (MatchClient c : spectators) c.send(msg);
     }
 
     private void sendError(PlayerSlot slot, String reason) {
@@ -749,8 +725,8 @@ public final class Match {
 
     // ----- disconnects (must hold lock) -----
 
-    private void disconnect(Client client) {
-        client.close();
+    private void disconnect(MatchClient client) {
+        client.closeConnection();
         if (client.spectator) {
             spectators.remove(client);
             return;
@@ -813,124 +789,4 @@ public final class Match {
         };
     }
 
-    // ----- inner types -----
-
-    private static final class PlayerSlot {
-        final Faction faction;
-        boolean occupied;
-        boolean connected;
-        boolean ready;
-        String name = "";
-        String token = "";
-        long lastSaveNanos;
-        long lastRestoreNanos;
-        Client client;
-
-        PlayerSlot(Faction faction) {
-            this.faction = faction;
-        }
-
-        boolean trySave() {
-            long now = System.nanoTime();
-            if (now - lastSaveNanos < SAVE_RESTORE_MIN_INTERVAL_MS * 1_000_000L) return false;
-            lastSaveNanos = now;
-            return true;
-        }
-
-        boolean tryRestore() {
-            long now = System.nanoTime();
-            if (now - lastRestoreNanos < SAVE_RESTORE_MIN_INTERVAL_MS * 1_000_000L) return false;
-            lastRestoreNanos = now;
-            return true;
-        }
-    }
-
-    /**
-     * Per-client outbound serialization: gRPC {@link StreamObserver} callbacks
-     * are not thread-safe, so every send for one client runs on its own
-     * single-threaded executor.
-     */
-    private static final class Client {
-        private static final int MAX_QUEUED_EVENTS = 512;
-
-        final StreamObserver<GameMessage> observer;
-        final ThreadPoolExecutor executor;
-        private final AtomicReference<GameMessage> pendingFrame = new AtomicReference<>();
-        volatile boolean closed;
-        volatile boolean spectator;
-        PlayerSlot slot;
-
-        Client(StreamObserver<GameMessage> observer) {
-            this.observer = observer;
-            this.executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-                    new ArrayBlockingQueue<>(MAX_QUEUED_EVENTS),
-                    daemonFactory("bloodfield-match-client"));
-            if (observer instanceof ServerCallStreamObserver<GameMessage> call) {
-                call.setOnReadyHandler(() -> {
-                    GameMessage frame = pendingFrame.getAndSet(null);
-                    if (frame != null) submit(frame);
-                });
-            }
-        }
-
-        private boolean readyNow() {
-            return !(observer instanceof ServerCallStreamObserver<GameMessage> call)
-                    || call.isReady();
-        }
-
-        /** Events: queued (bounded); a reader this far behind is dropped. */
-        void send(GameMessage msg) {
-            submit(msg);
-        }
-
-        /** Frames: a slow reader gets the latest frame, never a backlog. */
-        void sendFrame(GameMessage msg) {
-            if (closed) return;
-            if (readyNow()) {
-                submit(msg);
-            } else {
-                pendingFrame.set(msg);
-            }
-        }
-
-        private void submit(GameMessage msg) {
-            if (closed) return;
-            try {
-                executor.submit(() -> {
-                    if (closed) return;
-                    try {
-                        observer.onNext(msg);
-                    } catch (RuntimeException ex) {
-                        closed = true;
-                    }
-                });
-            } catch (RuntimeException rejected) {
-                closed = true;
-            }
-        }
-
-        void fail(String reason) {
-            if (closed) return;
-            closed = true;
-            try {
-                executor.submit(() -> {
-                    try {
-                        observer.onNext(GameMessage.newBuilder()
-                                .setError(ErrorEvent.newBuilder().setReason(reason))
-                                .build());
-                        observer.onCompleted();
-                    } catch (RuntimeException ignored) {
-                    }
-                });
-            } catch (RuntimeException ignored) {
-            } finally {
-                executor.shutdown();
-            }
-        }
-
-        void close() {
-            closed = true;
-            executor.shutdown();
-        }
-    }
 }

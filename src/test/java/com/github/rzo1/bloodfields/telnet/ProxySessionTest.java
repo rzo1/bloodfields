@@ -34,6 +34,11 @@ class ProxySessionTest {
 
     private static final long DEADLINE_MS = 15_000;
 
+    static {
+        // The product cadence protects 9600 baud; tests render at wire speed.
+        System.setProperty("bloodfield.proxy.frameMs", "50");
+    }
+
     @Test
     void unreachableMatchServerShowsCarrierLostAndCloses() throws Exception {
         int deadPort;
@@ -52,7 +57,7 @@ class ProxySessionTest {
     }
 
     @Test
-    void bothSeatsTakenShowsMatchFullAndCloses() throws Exception {
+    void bothSeatsTakenOffersTheGalleryAndSpectates() throws Exception {
         try (GrpcMatchServer grpc = new GrpcMatchServer(0)) {
             grpc.start();
             GameClient red = GameClient.connect("127.0.0.1", grpc.port(), "ann");
@@ -63,9 +68,18 @@ class ProxySessionTest {
                 try (TelnetServer telnet = new TelnetServer(0, 2, "127.0.0.1", grpc.port())) {
                     telnet.start();
                     try (Socket c64 = connect(telnet)) {
-                        byte[] out = readUntil(c64.getInputStream(), "MATCH FULL - TWO GENERALS ALREADY");
-                        assertContains(out, "MATCH FULL - TWO GENERALS ALREADY",
-                                "match full notice");
+                        byte[] out = readUntil(c64.getInputStream(), "W - WATCH FROM THE GALLERY");
+                        assertContains(out, "TWO GENERALS ALREADY", "match full detail");
+                        assertContains(out, "W - WATCH FROM THE GALLERY", "gallery offer");
+                        c64.getOutputStream().write('W');
+                        c64.getOutputStream().flush();
+                        byte[] watching = readUntil(c64.getInputStream(), "SPECTATING");
+                        assertContains(watching, "SPECTATING", "spectator HUD");
+                        assertContains(watching, "WAR COUNCIL", "spectator lobby view");
+                        c64.getOutputStream().write('Q');
+                        c64.getOutputStream().flush();
+                        assertContains(readUntil(c64.getInputStream(), "CROWS"), "CROWS",
+                                "goodbye after leaving the gallery");
                         assertEof(c64);
                     }
                 }
@@ -85,11 +99,8 @@ class ProxySessionTest {
                 telnet.start();
                 try (Socket c64 = connect(telnet)) {
                     InputStream in = c64.getInputStream();
-                    // The proxy joined the real match and sits in the lobby.
                     assertContains(readUntil(in, "WAR COUNCIL"), "WAR COUNCIL", "lobby screen");
-
                     grpc.stop(); // the line goes dead under the proxy session
-
                     byte[] out = readUntil(in, "CARRIER LOST");
                     assertContains(out, "CARRIER LOST", "carrier lost notice");
                     assertEof(c64);

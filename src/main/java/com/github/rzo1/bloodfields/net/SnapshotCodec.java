@@ -19,7 +19,7 @@ import com.github.rzo1.bloodfields.net.proto.ProjectileState;
 import com.github.rzo1.bloodfields.net.proto.Snapshot;
 import com.github.rzo1.bloodfields.net.proto.StructureState;
 import com.github.rzo1.bloodfields.net.proto.Tile;
-import com.github.rzo1.bloodfields.net.proto.UnitState;
+import com.github.rzo1.bloodfields.model.UnitState;
 import com.github.rzo1.bloodfields.ui.Maps;
 
 import java.util.ArrayList;
@@ -181,7 +181,7 @@ public final class SnapshotCodec {
             }
         }
         Map<Long, Unit> byId = new HashMap<>();
-        for (UnitState us : snap.getUnitsList()) {
+        for (com.github.rzo1.bloodfields.net.proto.UnitState us : snap.getUnitsList()) {
             UnitType type = ProtoMapper.unitType(us.getType());
             Faction faction = ProtoMapper.faction(us.getFaction());
             Unit u = new Unit(us.getId(), type, faction, us.getX(), us.getY(), 1.0, us.getVeteranRank());
@@ -196,17 +196,17 @@ public final class SnapshotCodec {
             u.burningDamagePerSec = us.getBurningDamagePerSec();
             boolean dead = us.getDead() || us.getHp() <= 0.0;
             if (dead) {
-                u.state = com.github.rzo1.bloodfields.model.UnitState.DEAD;
+                u.state = UnitState.DEAD;
             } else if (snap.getVersion() >= 2 && us.getModelState() > 0
-                    && us.getModelState() < com.github.rzo1.bloodfields.model.UnitState.values().length) {
-                u.state = com.github.rzo1.bloodfields.model.UnitState.values()[us.getModelState()];
+                    && us.getModelState() < UnitState.values().length) {
+                u.state = UnitState.values()[us.getModelState()];
             } else {
-                u.state = com.github.rzo1.bloodfields.model.UnitState.IDLE;
+                u.state = UnitState.IDLE;
             }
             st.armyOf(faction).add(u);
             byId.put(u.id, u);
         }
-        for (UnitState us : snap.getUnitsList()) {
+        for (com.github.rzo1.bloodfields.net.proto.UnitState us : snap.getUnitsList()) {
             if (us.getTargetId() == 0 && us.getBurningAttackerId() == 0) continue;
             Unit u = byId.get(us.getId());
             if (u == null) continue;
@@ -305,7 +305,7 @@ public final class SnapshotCodec {
         count(snap.getScorchedCount(), 40 * 25, "scorched");
         java.util.Set<Long> ids = new java.util.HashSet<>();
         long maxId = 0;
-        for (UnitState us : snap.getUnitsList()) {
+        for (com.github.rzo1.bloodfields.net.proto.UnitState us : snap.getUnitsList()) {
             if (us.getId() <= 0 || !ids.add(us.getId())) {
                 throw new IllegalArgumentException("duplicate or non-positive unit id: " + us.getId());
             }
@@ -416,9 +416,9 @@ public final class SnapshotCodec {
         }
     }
 
-    private static UnitState unitState(Unit u) {
-        boolean dead = u.state == com.github.rzo1.bloodfields.model.UnitState.DEAD || u.hp <= 0.0;
-        return UnitState.newBuilder()
+    private static com.github.rzo1.bloodfields.net.proto.UnitState unitState(Unit u) {
+        boolean dead = u.state == UnitState.DEAD || u.hp <= 0.0;
+        return com.github.rzo1.bloodfields.net.proto.UnitState.newBuilder()
                 .setId(u.id)
                 .setType(ProtoMapper.unitKind(u.type))
                 .setFaction(ProtoMapper.factionKind(u.faction))

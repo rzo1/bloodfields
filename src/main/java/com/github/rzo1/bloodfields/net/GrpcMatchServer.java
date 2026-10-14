@@ -1,5 +1,6 @@
 package com.github.rzo1.bloodfields.net;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -13,9 +14,11 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
  * silent. {@link #stop()} shuts the match down too — an earlier version
  * left its battle scheduler running after the server died.
  *
- * <p>Binds loopback by default: the stream is plaintext and unauthenticated
- * (reconnect tokens and snapshot seals guard seats and scrolls, not the
- * wire), so serving the internet is an explicit {@code --bind} choice.
+ * <p>Binds loopback by default. The stream is plaintext unless a TLS
+ * certificate is supplied ({@code grpc-server --tls=cert:key}); TLS or
+ * not it is unauthenticated — reconnect tokens and snapshot seals guard
+ * seats and scrolls, TLS guards the wire, and serving the internet is an
+ * explicit {@code --bind} choice either way.
  */
 public final class GrpcMatchServer implements AutoCloseable {
 
@@ -26,6 +29,8 @@ public final class GrpcMatchServer implements AutoCloseable {
     private final InetAddress bindAddress;
     private final int requestedPort;
     private final Match match;
+    private final File tlsCert;
+    private final File tlsKey;
     private Server server;
 
     public GrpcMatchServer() {
@@ -37,14 +42,38 @@ public final class GrpcMatchServer implements AutoCloseable {
     }
 
     public GrpcMatchServer(InetAddress bindAddress, int port, SnapshotSigner signer) {
+        this(bindAddress, port, signer, null, null);
+    }
+
+    /**
+     * @param tlsCert PEM certificate chain, with {@code tlsKey}; both null
+     *                serves plaintext (the default)
+     * @param tlsKey  PEM private key for {@code tlsCert}
+     */
+    public GrpcMatchServer(InetAddress bindAddress, int port, SnapshotSigner signer,
+                           File tlsCert, File tlsKey) {
         this(bindAddress, port, new Match(Match.DEFAULT_SERVER_NAME,
-                Match.BATTLE_PERIOD_MS, signer));
+                Match.BATTLE_PERIOD_MS, signer), tlsCert, tlsKey);
     }
 
     GrpcMatchServer(InetAddress bindAddress, int port, Match match) {
+        this(bindAddress, port, match, null, null);
+    }
+
+    GrpcMatchServer(InetAddress bindAddress, int port, Match match, File tlsCert, File tlsKey) {
+        if ((tlsCert == null) != (tlsKey == null)) {
+            throw new IllegalArgumentException("TLS needs both certificate and key");
+        }
         this.bindAddress = bindAddress;
         this.requestedPort = port;
         this.match = match;
+        this.tlsCert = tlsCert;
+        this.tlsKey = tlsKey;
+    }
+
+    /** True when this server requires TLS from its clients. */
+    public boolean tlsEnabled() {
+        return tlsCert != null;
     }
 
     /** The hosted match (for tests and lifecycle). */
@@ -58,11 +87,14 @@ public final class GrpcMatchServer implements AutoCloseable {
     }
 
     public void start() throws IOException {
-        server = NettyServerBuilder.forAddress(new InetSocketAddress(bindAddress(), requestedPort))
+        NettyServerBuilder builder = NettyServerBuilder
+                .forAddress(new InetSocketAddress(bindAddress(), requestedPort))
                 .addService(new BloodfieldService(match))
-                .maxInboundMessageSize(MAX_INBOUND_MESSAGE_BYTES)
-                .build()
-                .start();
+                .maxInboundMessageSize(MAX_INBOUND_MESSAGE_BYTES);
+        if (tlsEnabled()) {
+            builder.sslContext(Tls.serverContext(tlsCert, tlsKey));
+        }
+        server = builder.build().start();
     }
 
     /** Actual bound port; with port 0 requested, the ephemeral port chosen. */

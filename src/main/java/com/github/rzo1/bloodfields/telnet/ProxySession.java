@@ -46,6 +46,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class ProxySession implements Runnable {
 
     private static final long FRAME_MS = 700;
+    /** Test hook: -Dbloodfield.proxy.frameMs quickens the render cadence. */
+    private final long frameMs = Math.max(10, Long.getLong("bloodfield.proxy.frameMs", FRAME_MS));
     private static final long FLASH_NANOS = 2_500_000_000L;
     private static final long PAGE_FLIP_NANOS = 2_500_000_000L;
     private static final long IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -62,6 +64,8 @@ public final class ProxySession implements Runnable {
 
     private final Socket socket;
     private final String proxyHost;
+    private final boolean proxyTls;
+    private final java.io.File proxyTrustCert;
     private final int proxyPort;
     private final PetsciiScreen screen = new PetsciiScreen();
     private final IacFilter iac = new IacFilter();
@@ -88,10 +92,18 @@ public final class ProxySession implements Runnable {
     private long flashUntilNanos;
     private long lastKeyNanos;
     private volatile boolean carrierLost;
+    private volatile boolean spectating;
 
     public ProxySession(Socket socket, String proxyHost, int proxyPort) {
+        this(socket, proxyHost, proxyPort, false, null);
+    }
+
+    public ProxySession(Socket socket, String proxyHost, int proxyPort,
+                        boolean proxyTls, java.io.File proxyTrustCert) {
         this.socket = socket;
         this.proxyHost = proxyHost;
+        this.proxyTls = proxyTls;
+        this.proxyTrustCert = proxyTrustCert;
         this.proxyPort = proxyPort;
     }
 
@@ -99,7 +111,7 @@ public final class ProxySession implements Runnable {
     public void run() {
         try {
             socket.setTcpNoDelay(true);
-            socket.setSoTimeout((int) FRAME_MS);
+            socket.setSoTimeout((int) frameMs);
             in = socket.getInputStream();
             out = socket.getOutputStream();
             negotiate();
@@ -113,6 +125,10 @@ public final class ProxySession implements Runnable {
                 if (p == null) {
                     sleepQuietly(100);
                     continue;
+                }
+                if (spectating) {
+                    outcome = spectateScreen();
+                    break;
                 }
                 outcome = switch (p) {
                     case LOBBY -> lobbyScreen();
@@ -151,7 +167,9 @@ public final class ProxySession implements Runnable {
         showLinking();
         GameClient c;
         try {
-            c = GameClient.connect(proxyHost, proxyPort, playerName());
+            c = proxyTls
+                    ? GameClient.connectTls(proxyHost, proxyPort, playerName(), "", false, proxyTrustCert)
+                    : GameClient.connect(proxyHost, proxyPort, playerName());
         } catch (RuntimeException ex) {
             c = null;
         }
@@ -166,13 +184,11 @@ public final class ProxySession implements Runnable {
         drain.setDaemon(true);
         drain.start();
         long deadline = System.currentTimeMillis() + WELCOME_TIMEOUT_MS;
-        while (c.faction() == null && !matchFull && System.currentTimeMillis() < deadline) {
+        while (c.faction() == null && !matchFull && c.streamOpen() && System.currentTimeMillis() < deadline) {
             sleepQuietly(50);
         }
         if (matchFull) {
-            showTerminalScreen("MATCH FULL - TWO GENERALS ALREADY",
-                    "THE FIELD IS TAKEN. TRY AGAIN LATER.");
-            return false;
+            return offerGallery(c);
         }
         mine = c.faction();
         if (mine == null) {
@@ -182,6 +198,100 @@ public final class ProxySession implements Runnable {
         }
         flash("YOU ARE " + mine.name());
         return true;
+    }
+
+    /**
+     * MATCH FULL is no longer a dead end on the C64 either: offer the
+     * gallery. On acceptance this session becomes a spectator — every
+     * frame rendered read-only, Q to leave.
+     */
+    private boolean offerGallery(GameClient rejected) throws IOException {
+        screen.clear((byte) ' ', Petscii.WHITE);
+        screen.center(6, "MATCH FULL", Petscii.LIGHT_RED);
+        screen.center(8, "TWO GENERALS ALREADY HOLD THE FIELD", Petscii.WHITE);
+        screen.center(11, "W - WATCH FROM THE GALLERY", Petscii.YELLOW);
+        screen.center(13, "Q - LEAVE", Petscii.GREY);
+        present();
+        while (true) {
+            int k = timedKey();
+            if (k == 'Q') {
+                showGoodbye();
+                return false;
+            }
+            if (k == 'W') {
+                break;
+            }
+            if (k != -1) {
+                lastKeyNanos = System.nanoTime();
+            }
+        }
+        rejected.close();
+        carrierLost = false;
+        matchFull = false;
+        GameClient c;
+        try {
+            c = proxyTls
+                    ? GameClient.connectTls(proxyHost, proxyPort, playerName(), "", true, proxyTrustCert)
+                    : GameClient.connect(proxyHost, proxyPort, playerName(), "", true);
+        } catch (RuntimeException ex) {
+            c = null;
+        }
+        if (c == null) {
+            showTerminalScreen("CARRIER LOST - NO ANSWER",
+                    "NO SERVER AT " + proxyHost + ":" + proxyPort);
+            return false;
+        }
+        client = c;
+        spectating = true;
+        lastEventNanos = System.nanoTime();
+        Thread drain = new Thread(this::drainLoop, "bloodfield-proxy-drain");
+        drain.setDaemon(true);
+        drain.start();
+        long deadline = System.currentTimeMillis() + WELCOME_TIMEOUT_MS;
+        while (!c.spectator() && c.streamOpen() && System.currentTimeMillis() < deadline) {
+            sleepQuietly(50);
+        }
+        if (!c.spectator()) {
+            showTerminalScreen("GALLERY FULL", "EVEN THE CROWS HAVE NO PERCH LEFT.");
+            return false;
+        }
+        flash("SPECTATING");
+        return true;
+    }
+
+    /** Read-only render loop for gallery sessions: watch everything, command nothing. */
+    private Outcome spectateScreen() throws IOException {
+        screen.invalidate();
+        while (true) {
+            if (carrierLost) return Outcome.DEAD;
+            Phase p = phaseRef.get();
+            LobbyState lb = lobbyRef.get();
+            String hud2 = flashOr("SPECTATING - Q:OUT");
+            if (p == Phase.BATTLE || p == Phase.ENDED) {
+                BattleState st = battleRef.get();
+                if (st != null) {
+                    String hud1 = "RED " + st.getRedAlive() + " BLU " + st.getBlueAlive()
+                            + " T" + mmss(st.getSimTime())
+                            + (st.getPaused() ? " PAUSED" : "");
+                    PetsciiProxyRenderer.renderBattle(screen, lb, st, hud1, hud2);
+                }
+            } else if (p == Phase.DEPLOY) {
+                DeployState dep = deployRef.get();
+                if (dep != null && lb != null) {
+                    PetsciiProxyRenderer.renderDeployment(screen, lb, dep, Faction.RED,
+                            -1, 0, PetsciiProxyRenderer.offsetForUnits(dep.getUnitsList()),
+                            "DEPLOYMENT", hud2);
+                }
+            } else if (lb != null) {
+                PetsciiProxyRenderer.renderLobbyBoard(screen, lb);
+                PetsciiRenderer.paintHud(screen, "WAR COUNCIL", hud2, 0);
+            }
+            present();
+            int k = timedKey();
+            if (k == 'Q') {
+                return Outcome.QUIT;
+            }
+        }
     }
 
     private String playerName() {

@@ -40,6 +40,24 @@ public final class GameClient implements AutoCloseable {
         return new GameClient(channel, name, reconnectToken, spectate);
     }
 
+    /**
+     * Connects over TLS. {@code trustCert} pins a PEM (typically the
+     * server's self-signed certificate); null trusts the platform roots.
+     */
+    public static GameClient connectTls(String host, int port, String name,
+                                        String reconnectToken, boolean spectate,
+                                        java.io.File trustCert) {
+        try {
+            ManagedChannel channel = NettyChannelBuilder.forAddress(host, port)
+                    .sslContext(Tls.clientContext(trustCert))
+                    .maxInboundMessageSize(GrpcMatchServer.MAX_INBOUND_MESSAGE_BYTES)
+                    .build();
+            return new GameClient(channel, name, reconnectToken, spectate);
+        } catch (javax.net.ssl.SSLException e) {
+            throw new IllegalArgumentException("TLS setup failed: " + e.getMessage(), e);
+        }
+    }
+
     private final ManagedChannel channel;
     private final ArrayBlockingQueue<GameMessage> inbox = new ArrayBlockingQueue<>(INBOX_CAPACITY);
     private final StreamObserver<PlayerMessage> out;

@@ -1,5 +1,6 @@
 package com.github.rzo1.bloodfields.telnet;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -35,6 +36,8 @@ public final class TelnetServer implements AutoCloseable {
     private final int requestedPort;
     private final int maxSessions;
     private final String proxyHost;
+    private final boolean proxyTls;
+    private final File proxyTrustCert;
     private final int proxyPort;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private final AtomicInteger active = new AtomicInteger();
@@ -72,11 +75,22 @@ public final class TelnetServer implements AutoCloseable {
      */
     public TelnetServer(InetAddress bindAddress, int port, int maxSessions,
                         String proxyHost, int proxyPort) {
+        this(bindAddress, port, maxSessions, proxyHost, proxyPort, false, null);
+    }
+
+    /**
+     * @param proxyTls       dial the match server over TLS (with {@code proxyHost})
+     * @param proxyTrustCert PEM to pin for the TLS uplink, or null for platform roots
+     */
+    public TelnetServer(InetAddress bindAddress, int port, int maxSessions,
+                        String proxyHost, int proxyPort, boolean proxyTls, File proxyTrustCert) {
         this.bindAddress = bindAddress;
         this.requestedPort = port;
         this.maxSessions = maxSessions;
         this.proxyHost = proxyHost;
         this.proxyPort = proxyPort;
+        this.proxyTls = proxyTls;
+        this.proxyTrustCert = proxyTrustCert;
     }
 
     /** The address this server binds (or will bind) to; loopback when unspecified. */
@@ -147,7 +161,7 @@ public final class TelnetServer implements AutoCloseable {
                 try {
                     Runnable session = proxyHost == null
                             ? new TelnetSession(s)
-                            : new ProxySession(s, proxyHost, proxyPort);
+                            : new ProxySession(s, proxyHost, proxyPort, proxyTls, proxyTrustCert);
                     session.run();
                 } finally {
                     clients.remove(s);

@@ -60,7 +60,7 @@ public final class PetsciiProxyRenderer {
         paintZone(scr, mine == Faction.BLUE ? dep.getBlueZone() : dep.getRedZone(), offset);
         paintUnits(scr, dep.getUnitsList(), 0, offset);
         int r = PetsciiRenderer.screenRow(curTileR, offset);
-        if (r >= 0) {
+        if (r >= 0 && curTileC >= 0 && curTileC < COLS) {
             scr.set(curTileC, r, scr.glyphAt(curTileC, r), scr.colorAt(curTileC, r), true);
         }
         PetsciiRenderer.paintHud(scr, hud1, hud2, offset);
