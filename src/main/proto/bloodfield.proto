@@ -1,0 +1,419 @@
+syntax = "proto3";
+
+package bloodfields.v1;
+
+option java_multiple_files = true;
+option java_package = "com.github.rzo1.bloodfields.net.proto";
+option java_outer_classname = "BloodfieldProto";
+
+// Two-player Bloodfield over one long-lived bidirectional stream.
+// There are no unary RPCs: both players join with Play() and keep the
+// stream open for the whole match. The same contract is used by the
+// hosting side and the joining side — the host plays through the same
+// client stream as the remote player, and proxies (e.g. the PETSCII
+// telnet frontend) sit on this contract too.
+service Bloodfield {
+  rpc Play(stream PlayerMessage) returns (stream GameMessage);
+}
+
+enum Faction {
+  FACTION_UNSPECIFIED = 0;
+  FACTION_RED = 1;
+  FACTION_BLUE = 2;
+  reserved 3 to 10;
+}
+
+enum Phase {
+  PHASE_UNSPECIFIED = 0;
+  LOBBY = 1;    // waiting for players / configuration
+  DEPLOY = 2;   // both players place their armies
+  BATTLE = 3;   // simulation running (server-driven)
+  ENDED = 4;    // result known; restore or rematch from here
+  reserved 5 to 10;
+}
+
+enum UnitKind {
+  UNIT_UNSPECIFIED = 0;
+  INFANTRY = 1;
+  ARCHER = 2;
+  CAVALRY = 3;
+  MAGE = 4;
+  NECROMANCER = 5;
+  HEALER = 6;
+  CATAPULT = 7;
+  ASSASSIN = 8;
+  GOLEM = 9;
+  PIKEMAN = 10;
+  GENERAL = 11;
+  DRAGON = 12;
+}
+
+enum Skill {
+  SKILL_UNSPECIFIED = 0;
+  BATTLE_LUST = 1;
+  IRON_DISCIPLINE = 2;
+  SWIFT_STRIKE = 3;
+  VAMPIRIC_BANNER = 4;
+  SWIFT_FEET = 5;
+}
+
+enum StructureKind {
+  STRUCTURE_UNSPECIFIED = 0;
+  WALL = 1;
+  TOWER = 2;
+  GATE = 3;
+}
+
+// ---------------------------------------------------------------- client ->
+
+message PlayerMessage {
+  oneof msg {
+    Join join = 1;               // must be the first message on a stream
+    Configure configure = 2;     // lobby: first player (RED) sets the map
+    PlaceUnit place = 3;         // deploy phase
+    RemoveUnit remove = 4;       // deploy phase: remove nearest own unit
+    SelectSkill select_skill = 5;
+    SetReady set_ready = 6;      // lobby + deploy + ended (rematch)
+    BattleControl battle = 7;    // battle phase
+    SaveGame save = 8;           // any phase except lobby
+    RestoreGame restore = 9;     // proposes restoring a snapshot (parley)
+    ConsentRestore consent_restore = 10;  // answer to a RestoreProposedEvent
+  }
+  reserved 11 to 20;
+}
+
+message Join {
+  string player_name = 1;        // display only; may be empty
+  // Reconnect token from a previous Welcome: reclaims a disconnected
+  // seat (any phase) instead of being turned away or stealing a seat.
+  string reconnect_token = 2;
+  // Join the gallery instead of a seat: spectators receive every frame
+  // and event but their commands are rejected.
+  bool spectate = 3;
+  reserved 4 to 10;
+}
+
+message Configure {
+  string map_id = 1;             // Maps.preset id, e.g. "fortress_wall"
+  int32 budget = 2;              // per-side deployment budget, 100..10000
+  bool dragons = 3;              // allow DRAGON placements
+}
+
+message PlaceUnit {
+  UnitKind type = 1;
+  double x = 2;                  // world coordinates (1280x800)
+  double y = 3;
+}
+
+message RemoveUnit {
+  double x = 1;
+  double y = 2;
+}
+
+message SelectSkill {
+  Skill skill = 1;               // SKILL_UNSPECIFIED clears the skill
+}
+
+message SetReady {
+  bool ready = 1;
+}
+
+message BattleControl {
+  enum Command {
+    CMD_UNSPECIFIED = 0;
+    SET_SPEED = 1;               // value: 0..3 -> 0.5x, 1x, 2x, 4x
+    PAUSE = 2;
+    RESUME = 3;
+    RESIGN = 4;
+  }
+  Command command = 1;
+  int32 value = 2;
+}
+
+message SaveGame {
+  string label = 1;              // free-form, echoed back in SaveEvent
+}
+
+message RestoreGame {
+  bytes snapshot = 1;            // a sealed Snapshot received on SaveEvent
+}
+
+// Restore is a parley: one side proposes, the other consents (or not).
+// Unilateral rewinds of a losing battle are not a thing.
+message ConsentRestore {
+  bool accept = 1;
+}
+
+// ---------------------------------------------------------------- server ->
+
+message GameMessage {
+  oneof msg {
+    Welcome welcome = 1;           // first message a client receives
+    LobbyState lobby = 2;          // lobby updates (players, config)
+    DeployState deploy = 3;        // deployment phase frames
+    BattleState battle = 4;        // battle frames
+    ResultEvent result = 5;        // battle decided
+    SaveEvent saved = 6;           // snapshot bytes, sent to BOTH players
+    RestoredEvent restored = 7;    // a snapshot was applied
+    ErrorEvent error = 8;          // rejected action (stream stays open)
+    RestoreProposedEvent restore_proposed = 9;  // opponent asks to restore
+    NoticeEvent notice = 10;       // herald's cry: notable battle events
+  }
+  reserved 11 to 20;
+}
+
+message Welcome {
+  Faction your_faction = 1;      // FACTION_UNSPECIFIED for spectators
+  Phase phase = 2;               // phase the match is currently in
+  string server_name = 3;
+  // Present this token on a later Join to reclaim this seat after a drop.
+  string reconnect_token = 4;
+  bool spectator = 5;
+  reserved 6 to 10;
+}
+
+message PlayerInfo {
+  Faction faction = 1;
+  string name = 2;
+  bool connected = 3;
+  bool ready = 4;
+}
+
+message StructureInfo {
+  int64 id = 1;
+  StructureKind type = 2;
+  double x = 3;
+  double y = 4;
+  double width = 5;
+  double height = 6;
+  bool destroyed = 7;
+  bool open = 8;                 // gates only
+}
+
+message LobbyState {
+  repeated PlayerInfo players = 1;
+  string map_id = 2;
+  string map_name = 3;
+  int32 budget = 4;
+  bool dragons = 5;
+  // Terrain rows as 25 strings of 40 chars ('.' grass, '*' forest,
+  // '#' river): clients render without needing the generator.
+  repeated string terrain_rows = 6;
+  repeated StructureInfo structures = 7;
+}
+
+message UnitInfo {
+  int64 id = 1;
+  UnitKind type = 2;
+  Faction faction = 3;
+  double x = 4;
+  double y = 5;
+  double hp = 6;
+  double max_hp = 7;
+  bool routed = 8;
+  bool garrisoned = 9;
+  bool burning = 10;
+  bool alive = 11;
+  int32 veteran_rank = 12;
+}
+
+message ZoneRect {
+  double min_x = 1;
+  double min_y = 2;
+  double max_x = 3;
+  double max_y = 4;
+}
+
+message DeployState {
+  repeated UnitInfo units = 1;   // placements of BOTH armies
+  int32 red_remaining = 2;
+  int32 blue_remaining = 3;
+  int32 budget = 4;
+  Skill red_skill = 5;
+  Skill blue_skill = 6;
+  bool red_ready = 7;
+  bool blue_ready = 8;
+  ZoneRect red_zone = 9;
+  ZoneRect blue_zone = 10;
+}
+
+message ProjectileInfo {
+  double x = 1;
+  double y = 2;
+  UnitKind attacker_type = 3;
+}
+
+message CorpseInfo {
+  double x = 1;
+  double y = 2;
+  Faction faction = 3;
+  UnitKind type = 4;
+}
+
+message Tile {
+  int32 col = 1;
+  int32 row = 2;
+}
+
+message BattleState {
+  repeated UnitInfo units = 1;
+  repeated ProjectileInfo projectiles = 2;
+  repeated CorpseInfo corpses = 3;
+  repeated Tile fires = 4;       // burning tiles
+  repeated Tile scorched = 5;    // burnt-out tiles
+  // Structure flags can change (gates open, walls fall); same ids as lobby.
+  repeated StructureInfo structures = 6;
+  double sim_time = 7;
+  int32 red_alive = 8;
+  int32 blue_alive = 9;
+  bool paused = 10;
+  int32 speed_index = 11;        // 0..3
+  Faction winner = 12;           // set once decided
+  int64 tick = 13;
+}
+
+message ResultEvent {
+  Faction winner = 1;            // FACTION_UNSPECIFIED on draw
+  bool draw = 2;
+  string resigned_by = 3;        // player name, or empty
+  int32 red_left = 4;
+  int32 blue_left = 5;
+  double sim_time = 6;
+}
+
+message SaveEvent {
+  bytes snapshot = 1;            // serialized Snapshot; persist anywhere
+  string saved_by = 2;
+  string label = 3;
+  Phase phase = 4;
+  double sim_time = 5;
+}
+
+message RestoredEvent {
+  string restored_by = 1;
+  Phase phase = 2;
+  double sim_time = 3;
+}
+
+message ErrorEvent {
+  string reason = 1;
+}
+
+message RestoreProposedEvent {
+  string proposed_by = 1;
+  Phase phase = 2;               // phase the snapshot would restore to
+  double sim_time = 3;
+}
+
+// Short human-readable battle news ("A DRAGON HAS FALLEN"), for HUDs.
+message NoticeEvent {
+  string text = 1;
+}
+
+// ---------------------------------------------------------------- snapshot
+
+// Full match state. Bytes are produced by the server on SaveGame and
+// accepted back via RestoreGame. Opaque to clients: persist or transfer
+// as-is. Versioned so future format changes can be rejected cleanly.
+message Snapshot {
+  int32 version = 1;             // currently 2
+  string map_id = 2;
+  int32 budget = 3;
+  bool dragons = 4;
+  Phase phase = 5;               // DEPLOY, BATTLE or ENDED
+  int64 tick = 6;
+  double sim_time = 7;
+  int64 rng_seed = 8;
+  int64 next_unit_id = 9;
+  Faction winner = 10;
+  ArmyState red = 11;
+  ArmyState blue = 12;
+  repeated UnitState units = 13;
+  repeated ProjectileState projectiles = 14;
+  repeated CorpseInfo corpses = 15;
+  repeated FireTile fires = 16;
+  repeated Tile scorched = 17;
+  repeated StructureState structures = 18;
+  repeated string player_names = 19;  // informational
+  // HMAC-SHA256 over this message with this field cleared, keyed by the
+  // issuing server. Restores of forged or foreign scrolls are rejected.
+  bytes seal = 20;
+  repeated FactionStats stats = 21;
+  int64 poke_rng_draws = 22;     // ai.poke RNG steps taken (continuity)
+  reserved 23 to 30;
+}
+
+message FactionStats {
+  Faction faction = 1;
+  int32 kills = 2;
+  int32 deaths = 3;
+  double damage_dealt = 4;
+  double damage_received = 5;
+  double biggest_hit = 6;
+  int64 last_fall_tick = 7;
+  repeated int64 credited_kill_ids = 8;
+}
+
+message ArmyState {
+  int32 budget = 1;
+  int32 reserve = 2;
+  Skill hero_skill = 3;
+  double hp_multiplier = 4;
+  map<int32, int32> caps = 5;    // UnitKind number -> per-type cap (if set)
+}
+
+message UnitState {
+  int64 id = 1;
+  UnitKind type = 2;
+  Faction faction = 3;
+  double x = 4;
+  double y = 5;
+  double vx = 6;
+  double vy = 7;
+  double hp = 8;
+  double max_hp = 9;
+  bool routed = 10;
+  bool garrisoned = 11;
+  int32 veteran_rank = 12;
+  bool dead = 13;
+  double attack_cooldown = 14;
+  double burning_seconds = 15;
+  double burning_damage_per_sec = 16;
+  int64 burning_attacker_id = 17;  // 0 = none
+  int64 target_id = 18;            // 0 = none
+  int32 model_state = 19;          // model UnitState ordinal (not forced IDLE)
+  reserved 20 to 25;
+}
+
+message ProjectileState {
+  double x = 1;
+  double y = 2;
+  double vx = 3;
+  double vy = 4;
+  double damage = 5;
+  UnitKind attacker_type = 6;
+  Faction faction = 7;
+  bool alive = 8;
+  int64 target_id = 9;             // homing target, 0 = none (v2)
+  int64 originator_id = 10;        // kill credit, 0 = none (v2)
+  double splash_radius = 11;
+  reserved 12 to 15;
+}
+
+message FireTile {
+  int32 col = 1;
+  int32 row = 2;
+  double remaining_seconds = 3;
+}
+
+message StructureState {
+  int64 id = 1;
+  StructureKind type = 2;
+  double x = 3;
+  double y = 4;
+  double width = 5;
+  double height = 6;
+  bool destroyed = 7;
+  bool open = 8;
+  double hp = 9;
+}

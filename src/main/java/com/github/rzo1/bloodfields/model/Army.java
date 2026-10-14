@@ -55,6 +55,10 @@ public final class Army {
 
     public int deploymentBudget() { return deploymentBudget; }
 
+    public void setDeploymentBudget(int v) {
+        this.deploymentBudget = Math.max(0, v);
+    }
+
     public int reserveBudget() { return reserveBudget; }
 
     public void setReserveBudget(int v) {
@@ -99,6 +103,11 @@ public final class Army {
         if (type == null) return;
         if (max < 0) max = 0;
         caps.put(type, max);
+    }
+
+    /** Explicitly set per-type caps (unmodifiable copy; empty = unlimited). */
+    public Map<UnitType, Integer> caps() {
+        return caps.isEmpty() ? Map.of() : Collections.unmodifiableMap(new EnumMap<>(caps));
     }
 
     public int capFor(UnitType type) {

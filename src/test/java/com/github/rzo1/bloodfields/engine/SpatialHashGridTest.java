@@ -4,6 +4,8 @@ import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.model.Unit;
 import com.github.rzo1.bloodfields.model.UnitState;
 import com.github.rzo1.bloodfields.model.UnitType;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -144,5 +146,15 @@ class SpatialHashGridTest {
         alive.state = UnitState.DEAD;
         alive.hp = 0.0;
         assertNull(grid.nearestEnemy(me));
+    }
+
+    @Test
+    void astronomicalCoordinatesCannotHangTheGrid() {
+        // One forged unit at 1e300 froze a whole match thread here:
+        // cellX became Integer.MAX_VALUE and the radius loop never ended.
+        SpatialHashGrid grid = new SpatialHashGrid(1280, 800, 64);
+        long deadline = System.nanoTime() + 2_000_000_000L;
+        grid.withinRadius(1.0e300, Double.NaN, 100);
+        assertTrue(System.nanoTime() < deadline, "withinRadius must terminate on absurd input");
     }
 }

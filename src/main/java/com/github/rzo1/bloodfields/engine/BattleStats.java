@@ -108,6 +108,25 @@ public final class BattleStats {
         return false;
     }
 
+    /** Victim ids already credited with a kill (for snapshot round-trips). */
+    public java.util.Set<Long> creditedKillIds() {
+        return java.util.Collections.unmodifiableSet(creditedKills);
+    }
+
+    /** Restores one faction's tallies (snapshot counterpart of {@link #summary()}). */
+    public void restoreFaction(Faction f, int killsV, int deathsV, double dealt,
+                               double received, double biggest, long lastFall,
+                               java.util.Collection<Long> credited) {
+        if (f == null) return;
+        kills.put(f, killsV);
+        deaths.put(f, deathsV);
+        damageDealt.put(f, dealt);
+        damageReceived.put(f, received);
+        biggestHit.put(f, biggest);
+        lastFallTick.put(f, lastFall);
+        if (credited != null) creditedKills.addAll(credited);
+    }
+
     public Summary summary() {
         return new Summary(kills, deaths, damageDealt, damageReceived, biggestHit, lastFallTick);
     }

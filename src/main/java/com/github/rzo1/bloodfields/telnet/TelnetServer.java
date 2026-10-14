@@ -1,5 +1,6 @@
 package com.github.rzo1.bloodfields.telnet;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -34,15 +35,29 @@ public final class TelnetServer implements AutoCloseable {
     private final InetAddress bindAddress;
     private final int requestedPort;
     private final int maxSessions;
+    private final String proxyHost;
+    private final boolean proxyTls;
+    private final File proxyTrustCert;
+    private final int proxyPort;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private final AtomicInteger active = new AtomicInteger();
     private volatile boolean running;
     private ServerSocket serverSocket;
     private Thread acceptThread;
 
-    /** Creates a server bound to the loopback interface ({@link #DEFAULT_BIND}). */
+    /** Creates a local-game server bound to loopback ({@link #DEFAULT_BIND}). */
     public TelnetServer(int port, int maxSessions) {
-        this(null, port, maxSessions);
+        this(null, port, maxSessions, null, 0);
+    }
+
+    /** Creates a server bound to loopback, optionally proxying (see 5-arg). */
+    public TelnetServer(int port, int maxSessions, String proxyHost, int proxyPort) {
+        this(null, port, maxSessions, proxyHost, proxyPort);
+    }
+
+    /** Creates a local-game server on an explicit bind address (null = loopback). */
+    public TelnetServer(InetAddress bindAddress, int port, int maxSessions) {
+        this(bindAddress, port, maxSessions, null, 0);
     }
 
     /**
@@ -52,11 +67,30 @@ public final class TelnetServer implements AutoCloseable {
      *                    pass a wildcard address only on a trusted network
      * @param port        TCP port, or 0 for an ephemeral port (see {@link #port()})
      * @param maxSessions maximum concurrent sessions; excess clients are rejected
+     * @param proxyHost   when non-{@code null}, every accepted session is served
+     *                    by a {@link ProxySession} bridging into the gRPC match
+     *                    server at {@code proxyHost:proxyPort} instead of a local
+     *                    {@link TelnetSession} game
+     * @param proxyPort   gRPC match server port (with {@code proxyHost})
      */
-    public TelnetServer(InetAddress bindAddress, int port, int maxSessions) {
+    public TelnetServer(InetAddress bindAddress, int port, int maxSessions,
+                        String proxyHost, int proxyPort) {
+        this(bindAddress, port, maxSessions, proxyHost, proxyPort, false, null);
+    }
+
+    /**
+     * @param proxyTls       dial the match server over TLS (with {@code proxyHost})
+     * @param proxyTrustCert PEM to pin for the TLS uplink, or null for platform roots
+     */
+    public TelnetServer(InetAddress bindAddress, int port, int maxSessions,
+                        String proxyHost, int proxyPort, boolean proxyTls, File proxyTrustCert) {
         this.bindAddress = bindAddress;
         this.requestedPort = port;
         this.maxSessions = maxSessions;
+        this.proxyHost = proxyHost;
+        this.proxyPort = proxyPort;
+        this.proxyTls = proxyTls;
+        this.proxyTrustCert = proxyTrustCert;
     }
 
     /** The address this server binds (or will bind) to; loopback when unspecified. */
@@ -125,7 +159,10 @@ public final class TelnetServer implements AutoCloseable {
             clients.add(s);
             Thread t = new Thread(() -> {
                 try {
-                    new TelnetSession(s).run();
+                    Runnable session = proxyHost == null
+                            ? new TelnetSession(s)
+                            : new ProxySession(s, proxyHost, proxyPort, proxyTls, proxyTrustCert);
+                    session.run();
                 } finally {
                     clients.remove(s);
                     active.decrementAndGet();

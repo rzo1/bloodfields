@@ -163,6 +163,72 @@ rendered by the committed `C64CharsetTool` (Pepto palette), e.g.
 
 ![The custom Bloodfield charset](docs/screenshots/c64/13-custom-charset.png)
 
+Add `--proxy=host:port` and the telnet server becomes a frontend for a remote
+2-player gRPC match instead of local play (see below).
+
+## Two-player over gRPC
+
+`grpc-server` hosts one 2-player match over a single long-lived bidirectional
+streaming RPC — there are no unary calls; both players keep a `Play` stream
+open for the whole match. The contract is symmetric: the hosting side and the
+joining side use the same stream, so the host plays through exactly the same
+client interface as the guest (and so does the telnet proxy).
+
+```bash
+java -cp target/bloodfields-1.2.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain grpc-server --port=6411
+```
+
+Match flow: both players join → lobby (first player configures map, budget,
+dragons; both ready-up) → deployment (each side places into its own half of
+the field) → real-time battle streamed at ~4 Hz (either side can set speed,
+pause, or resign) → result → rematch vote. **Both sides can save and restore
+state**: a save request snapshots the full match — units, projectiles,
+corpses, fires, structures, per-side caps/stats, even AI RNG continuity —
+seals it with the server's HMAC key, and delivers the bytes to *both*
+players. Restoring is a **parley**: one side proposes, the other must consent
+(telnet: `7`/`8`), so nobody can unilaterally rewind a losing battle;
+forged or foreign snapshots fail the seal check and field validation before
+they touch the engine. Saves/restores are rate-limited, frames coalesce for
+slow readers instead of queueing without bound, and a dropped player can
+reclaim their seat mid-battle with the reconnect token from their `Welcome`
+(strangers cannot). Up to eight extra streams may **spectate** (`spectate`
+on join): spectators receive every frame, save/restore event, and herald
+notice ("A DRAGON HAS FALLEN") but their commands are rejected — and a C64
+arriving to a full match is offered the gallery in PETSCII (`W` to watch).
+
+The wire is **plaintext and unauthenticated by default** — tokens and
+snapshot seals guard seats and scrolls, not the connection. For an
+encrypted wire, serve TLS and dial it from the proxy:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 825 -nodes \
+  -subj "/CN=hostA" -addext "subjectAltName=DNS:hostA"
+java -cp ... CliMain grpc-server --port=6411 --bind=0.0.0.0 --tls=cert.pem:key.pem
+java -cp ... CliMain telnet --port=6400 --proxy=hostA:6411 --proxy-tls=cert.pem
+```
+
+(`--proxy-tls` without a PEM trusts the platform roots; with one it pins that
+certificate. The C64-to-proxy telnet leg is inherently plaintext, so run the
+proxy on a trusted machine near the C64 and let TLS guard the long haul.)
+The server binds to loopback by default; serving beyond this machine is
+explicit (`--bind=0.0.0.0`) and should happen only on a trusted network.
+Snapshot seals are ephemeral by default (they die with the server); pass
+`--snapshot-key=...` (or set `BLOODFIELD_SNAPSHOT_KEY`) for seals that
+survive restarts.
+
+The contract is one file, [`src/main/proto/bloodfield.proto`](src/main/proto/bloodfield.proto)
+(package `bloodfields.v1`), and any gRPC client can play. The telnet server
+proxies it, so two C64s can fight each other over the internet:
+
+```bash
+# machine A hosts the match (LAN play)
+java -cp ... CliMain grpc-server --port=6411 --bind=0.0.0.0
+# machine A (or anywhere) serves PETSCII sessions bridged to the match
+java -cp ... CliMain telnet --port=6400 --proxy=hostA:6411
+```
+
+Code lives in `com.github.rzo1.bloodfields.net`.
+
 ## Native installer
 
 Bloodfield can be packaged as a native installer that bundles its own JRE, so

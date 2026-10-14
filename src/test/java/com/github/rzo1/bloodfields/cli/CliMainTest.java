@@ -148,6 +148,7 @@ class CliMainTest {
         Captured c = run(new String[]{"help"});
         assertEquals(0, c.exitCode);
         assertTrue(c.out.contains("telnet"));
+        assertTrue(c.out.contains("grpc-server"));
     }
 
     @Test
@@ -156,6 +157,50 @@ class CliMainTest {
         assertEquals(2, c.exitCode);
         Captured c2 = run(new String[]{"telnet", "--bogus"});
         assertEquals(2, c2.exitCode);
+    }
+
+    @Test
+    void telnetProxyRejectsBadTargetAndStartsInProxyMode() throws Exception {
+        Captured noColon = run(new String[]{"telnet", "--proxy=localhost"});
+        assertEquals(2, noColon.exitCode);
+        assertTrue(noColon.err.contains("Bad --proxy"));
+        Captured badPort = run(new String[]{"telnet", "--proxy=localhost:abc"});
+        assertEquals(2, badPort.exitCode);
+        Captured outOfRange = run(new String[]{"telnet", "--proxy=localhost:99999"});
+        assertEquals(2, outOfRange.exitCode);
+        Captured empty = run(new String[]{"telnet", "--proxy="});
+        assertEquals(2, empty.exitCode);
+
+        // A valid target boots the telnet server in proxy mode and then
+        // blocks, so run it on a thread and interrupt the await().
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        Thread server = new Thread(() -> CliMain.run(
+                new String[]{"telnet", "--port=0", "--sessions=1", "--proxy=127.0.0.1:6411"},
+                new ByteArrayInputStream(new byte[0]),
+                new PrintStream(out, true, StandardCharsets.UTF_8),
+                new PrintStream(err, true, StandardCharsets.UTF_8)));
+        server.setDaemon(true);
+        server.start();
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (!out.toString(StandardCharsets.UTF_8).contains("proxying to gRPC match at 127.0.0.1:6411")
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50);
+        }
+        assertTrue(out.toString(StandardCharsets.UTF_8).contains("proxying to gRPC match at 127.0.0.1:6411"));
+        server.interrupt();
+        server.join(2000);
+        assertFalse(server.isAlive());
+    }
+
+    @Test
+    void grpcServerRejectsBadFlags() {
+        Captured c = run(new String[]{"grpc-server", "--port=abc"});
+        assertEquals(2, c.exitCode);
+        Captured c2 = run(new String[]{"grpc-server", "--bogus"});
+        assertEquals(2, c2.exitCode);
+        Captured c3 = run(new String[]{"grpc-server", "--port=99999"});
+        assertEquals(2, c3.exitCode);
     }
 
     private static Captured run(String[] args) {

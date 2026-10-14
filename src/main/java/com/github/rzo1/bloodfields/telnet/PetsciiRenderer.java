@@ -114,7 +114,7 @@ public final class PetsciiRenderer {
         renderBattle(scr, game, offsetForBattle(game), hud1, hud2);
     }
 
-    private static void paintHud(PetsciiScreen scr, String hud1, String hud2, int offset) {
+    static void paintHud(PetsciiScreen scr, String hud1, String hud2, int offset) {
         for (int c = 0; c < PetsciiScreen.COLS; c++) {
             scr.set(c, 23, (byte) ' ', Petscii.GREY);
             scr.set(c, 24, (byte) ' ', Petscii.GREY);

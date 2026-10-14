@@ -14,6 +14,8 @@ import com.github.rzo1.bloodfields.ui.Levels;
 import com.github.rzo1.bloodfields.ui.MapPreset;
 import com.github.rzo1.bloodfields.ui.Maps;
 import com.github.rzo1.bloodfields.telnet.TelnetServer;
+import com.github.rzo1.bloodfields.net.GrpcMatchServer;
+import com.github.rzo1.bloodfields.net.SnapshotSigner;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -57,6 +59,7 @@ public final class CliMain {
                 case "sim" -> sim(args, out, err);
                 case "replay" -> replay(args, out, err);
                 case "telnet" -> telnet(args, out, err);
+                case "grpc-server" -> grpcServer(args, out, err);
                 default -> {
                     err.println("Unknown command: " + cmd);
                     printHelp(err);
@@ -94,6 +97,16 @@ public final class CliMain {
                 + TelnetServer.DEFAULT_MAX_SESSIONS + ").");
         out.println("    --bind=ADDR         Bind address (default " + TelnetServer.DEFAULT_BIND
                 + "; use 0.0.0.0 on a trusted LAN for real C64 hardware).");
+        out.println("    --proxy=host:port   Bridge telnet sessions into a remote 2-player gRPC");
+        out.println("                        match as player seats (run 'grpc-server' there).");
+        out.println("    --proxy-tls[=pem]   Dial the match over TLS (optional trust PEM to pin).");
+        out.println("  grpc-server           Start the 2-player gRPC match server.");
+        out.println("    --port=N            Listen port (default "
+                + GrpcMatchServer.DEFAULT_PORT + ").");
+        out.println("    --bind=ADDR         Bind address (default 127.0.0.1; 0.0.0.0 serves the LAN).");
+        out.println("    --tls=cert:key      PEM cert+key: require TLS (see README).");
+        out.println("    --snapshot-key=S    Stable seal key so restores survive restarts");
+        out.println("                        (or env BLOODFIELD_SNAPSHOT_KEY).");
         out.println("  help                  This message.");
         out.println();
         out.println("Play commands (one JSON object per line):");
@@ -533,6 +546,9 @@ public final class CliMain {
         int port = TelnetServer.DEFAULT_PORT;
         int maxSessions = TelnetServer.DEFAULT_MAX_SESSIONS;
         InetAddress bind = null;
+        String proxy = null;
+        boolean proxyTls = false;
+        java.io.File proxyTrust = null;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if (a.startsWith("--port=")) {
@@ -556,10 +572,45 @@ public final class CliMain {
                     err.println("Bad --sessions: " + a);
                     return 2;
                 }
+            } else if (a.equals("--proxy-tls")) {
+                proxyTls = true;
+            } else if (a.startsWith("--proxy-tls=")) {
+                proxyTls = true;
+                proxyTrust = new java.io.File(a.substring(12));
+                if (!proxyTrust.isFile()) {
+                    err.println("Bad --proxy-tls (trust file not found): " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--proxy=")) {
+                proxy = a.substring(8);
+                if (proxy.isEmpty()) {
+                    err.println("Bad --proxy: " + a);
+                    return 2;
+                }
             } else {
                 err.println("Unknown flag: " + a);
                 return 2;
             }
+        }
+        String proxyHost = null;
+        int proxyPort = -1;
+        if (proxy != null) {
+            int colon = proxy.lastIndexOf(':');
+            if (colon <= 0 || colon == proxy.length() - 1) {
+                err.println("Bad --proxy (expected host:port): " + proxy);
+                return 2;
+            }
+            try {
+                proxyPort = Integer.parseInt(proxy.substring(colon + 1));
+            } catch (NumberFormatException nfe) {
+                err.println("Bad --proxy (expected host:port): " + proxy);
+                return 2;
+            }
+            if (proxyPort < 1 || proxyPort > 65535) {
+                err.println("Bad --proxy (expected host:port): " + proxy);
+                return 2;
+            }
+            proxyHost = proxy.substring(0, colon);
         }
         if (port < 0 || port > 65535) {
             err.println("Bad --port: " + port);
@@ -569,7 +620,7 @@ public final class CliMain {
             err.println("Bad --sessions: " + maxSessions);
             return 2;
         }
-        TelnetServer server = new TelnetServer(bind, port, maxSessions);
+        TelnetServer server = new TelnetServer(bind, port, maxSessions, proxyHost, proxyPort, proxyTls, proxyTrust);
         try {
             server.start();
         } catch (IOException ex) {
@@ -578,6 +629,7 @@ public final class CliMain {
         }
         out.println("Bloodfield C64 telnet server listening on "
                 + server.bindAddress().getHostAddress() + ":" + server.port()
+                + (proxyHost != null ? ", proxying to gRPC match at " + proxyHost + ":" + proxyPort : "")
                 + " (max " + maxSessions + " sessions). Press Ctrl+C to stop.");
         if (!server.bindAddress().isLoopbackAddress()) {
             out.println("WARNING: telnet has no authentication — anyone who can reach "
@@ -586,6 +638,86 @@ public final class CliMain {
         }
         out.flush();
         server.await();
+        return 0;
+    }
+
+    // ----- grpc-server -----
+
+    private static int grpcServer(String[] args, PrintStream out, PrintStream err) {
+        int port = GrpcMatchServer.DEFAULT_PORT;
+        InetAddress bind = null;
+        String snapshotKey = System.getenv("BLOODFIELD_SNAPSHOT_KEY");
+        java.io.File tlsCert = null;
+        java.io.File tlsKey = null;
+        if (snapshotKey != null && snapshotKey.isEmpty()) snapshotKey = null;
+        for (int i = 1; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--port=")) {
+                try {
+                    port = Integer.parseInt(a.substring(7));
+                } catch (NumberFormatException nfe) {
+                    err.println("Bad --port: " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--bind=")) {
+                try {
+                    bind = InetAddress.getByName(a.substring(7));
+                } catch (UnknownHostException uhe) {
+                    err.println("Bad --bind: " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--tls=")) {
+                int colon = a.lastIndexOf(':');
+                if (colon <= 6 || colon == a.length() - 1) {
+                    err.println("Bad --tls (expected cert.pem:key.pem): " + a);
+                    return 2;
+                }
+                tlsCert = new java.io.File(a.substring(6, colon));
+                tlsKey = new java.io.File(a.substring(colon + 1));
+                if (!tlsCert.isFile() || !tlsKey.isFile()) {
+                    err.println("Bad --tls (files not found): " + a);
+                    return 2;
+                }
+            } else if (a.startsWith("--snapshot-key=")) {
+                snapshotKey = a.substring(15);
+                if (snapshotKey.isEmpty()) {
+                    err.println("Bad --snapshot-key: " + a);
+                    return 2;
+                }
+            } else {
+                err.println("Unknown flag: " + a);
+                return 2;
+            }
+        }
+        if (port < 0 || port > 65535) {
+            err.println("Bad --port: " + port);
+            return 2;
+        }
+        SnapshotSigner signer = snapshotKey == null
+                ? new SnapshotSigner()
+                : new SnapshotSigner(snapshotKey);
+        GrpcMatchServer server = new GrpcMatchServer(bind, port, signer, tlsCert, tlsKey);
+        try {
+            server.start();
+        } catch (java.io.IOException ex) {
+            err.println("Error: " + ex.getMessage());
+            return 1;
+        }
+        out.println("Bloodfield gRPC match server (" + (server.tlsEnabled() ? "TLS" : "plaintext") + ") on "
+                + server.bindAddress().getHostAddress() + ":" + server.port()
+                + ". Press Ctrl+C to stop.");
+        if (!server.bindAddress().isLoopbackAddress()) {
+            out.println("WARNING: " + (server.tlsEnabled() ? "TLS" : "PLAINTEXT")
+                    + " gRPC with no authentication — anyone who can reach "
+                    + server.bindAddress().getHostAddress() + ":" + server.port()
+                    + " can join or spectate. Use only on a trusted network.");
+        }
+        if (snapshotKey == null) {
+            out.println("Snapshot seals are ephemeral (restores work until this server stops); "
+                    + "set --snapshot-key or BLOODFIELD_SNAPSHOT_KEY for seals that survive restarts.");
+        }
+        out.flush();
+        server.blockUntilShutdown();
         return 0;
     }
 
