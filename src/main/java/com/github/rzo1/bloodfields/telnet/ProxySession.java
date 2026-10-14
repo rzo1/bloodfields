@@ -78,7 +78,7 @@ public final class ProxySession implements Runnable {
     private final String proxyHost;
     private final int proxyPort;
     private final PetsciiScreen screen = new PetsciiScreen();
-    private final TelnetSession.IacFilter iac = new TelnetSession.IacFilter();
+    private final IacFilter iac = new IacFilter();
 
     private final AtomicReference<Phase> phaseRef = new AtomicReference<>();
     private final AtomicReference<LobbyState> lobbyRef = new AtomicReference<>();

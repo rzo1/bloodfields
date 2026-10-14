@@ -510,6 +510,32 @@
                 </configuration>
             </plugin>
             <plugin>
+                <!-- Build the C64 character ROM from the designed charset in
+                     telnet/C64Charset.java and package it in the jar. The
+                     telnet byte stream is unchanged; the ROM is swapped in
+                     on the C64/emulator side. Regenerate docs images with
+                     C64CharsetTool's demo mode. -->
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>generate-c64-charset</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.github.rzo1.bloodfields.telnet.C64CharsetTool</mainClass>
+                            <arguments>
+                                <argument>charset</argument>
+                                <argument>${project.build.outputDirectory}/bloodfield-chargen.bin</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.openjfx</groupId>
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>

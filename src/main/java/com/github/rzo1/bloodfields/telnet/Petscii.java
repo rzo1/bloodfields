@@ -26,9 +26,17 @@ public final class Petscii {
     public static final byte CYAN = (byte) 159;
     public static final byte ORANGE = (byte) 129;
 
+    // Incoming key codes (after IacFilter decoding). This is the single
+    // source for these values; sessions must not redeclare them.
+    public static final int KEY_CR = 13;
+    public static final int KEY_DOWN = 17;
+    public static final int KEY_DEL = 20;
+    public static final int KEY_RIGHT = 29;
+    public static final int KEY_SPACE = 32;
+    public static final int KEY_UP = 145;
+    public static final int KEY_LEFT = 157;
+
     // Cursor / screen control
-    public static final byte CR = 13;
-    public static final byte LOWERCASE_MODE = 14;
     public static final byte CURSOR_DOWN = 17;
     public static final byte RVS_ON = 18;
     public static final byte HOME = 19;

@@ -98,22 +98,30 @@ A `bin/bloodfields-cli` wrapper is included.
 
 There is a telnet server frontend that plays the whole game — menus, campaign,
 skirmish, deployment, real-time battle — in PETSCII on a Commodore 64's
-40x25 color text screen. The world is 1280x800 on 32-pixel tiles, so the
-battlefield maps almost 1:1 onto the C64's 40x25 characters: one tile, one
-character cell, faction carried by color RAM (you are light red, the enemy is
-light blue).
+40x25 color text screen. The world is 1280x800 on 32-pixel tiles: exactly
+40x25 tiles, one tile per character cell, faction carried by color RAM (you
+are light red, the enemy is light blue). Rows 23-24 carry the HUD, so the
+board is a 23-row viewport that scrolls over all 25 tile rows — it follows
+your deployment cursor and the fighting in battle (marker at the end of the
+HUD line), and every tile row stays reachable.
 
 ```bash
 mvn -DskipTests package
+# Emulator on this machine (default bind is loopback only):
 java -cp target/bloodfields-1.2.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain telnet --port=6400
+# Real C64 hardware on your LAN (telnet has no authentication — trusted networks only):
+java -cp target/bloodfields-1.2.0-SNAPSHOT-all.jar com.github.rzo1.bloodfields.cli.CliMain telnet --port=6400 --bind=0.0.0.0
 ```
 
 ![Fortress battle on the C64 screen](docs/screenshots/c64/10-battle-fortress-start.png)
 
 Then connect from your C64 with a PETSCII terminal (CCGMS, StrikeTerm) over a
-WiFi modem / RR-Net / emulator RS-232 bridge and `ATDT host:6400`. From a PC,
-use a PETSCII-capable terminal; a plain UTF-8 telnet client will show the
-letters but not the colors or graphics.
+WiFi modem / RR-Net / emulator RS-232 bridge and `ATDT host:6400` — set the
+terminal's background to black, or the blue river blocks drown in the stock
+blue screen. From a PC any telnet client works for input (ANSI arrows and
+`DEL`/`BS` are translated to the C64 cursor keys, CRLF line endings are
+handled), but use a PETSCII-capable terminal to see the colors and graphics
+as intended.
 
 - Campaign: all 11 levels, victory prints the next level code.
 - Skirmish: pick a map, a budget (100-10000), and enemy dragon opt-in; the
@@ -122,10 +130,38 @@ letters but not the colors or graphics.
   `DEL` removes, `K` cycles the hero skill, `S` starts the battle.
 - Battle: `1`-`4` set speed (0.5x-4x), `P` pauses, `Q` resigns.
 
-The renderer diffs frames and only re-sends rows that changed, so it stays
-playable at 9600 baud. Necromancers work: deaths are tracked server-side and
-fed into the corpse field. Weather is shown but (like the rest of the CLI)
-does not alter combat. Code lives in `com.github.rzo1.bloodfields.telnet`.
+The renderer diffs frames and only re-sends rows that changed. Measured
+frames: ~1.5 KB for a full repaint, a few hundred bytes typically, up to
+~700 B at 4x speed in a busy battle. At 9600 baud roughly 670 B fit in one
+700 ms frame, so 0.5x-2x stay ahead of the link and 4x peaks lag slightly —
+writes are deadline-bounded and pace the frame loop (backpressure), never
+queued without bound, and a client that stops reading entirely is dropped
+after 10 s instead of holding its session slot forever. Necromancers work:
+deaths are tracked server-side from the first tick and fed into the corpse
+field. Weather is shown but (like the rest of the CLI) does not alter
+combat. Code lives in `com.github.rzo1.bloodfields.telnet`.
+
+### Optional: the Bloodfield character ROM
+
+The build designs and generates a complete replacement C64 character set —
+an original block font plus refined battlefield glyphs (grass tufts, wavy
+river/masonry blocks, a crenellated `T` for towers) — assembled into a
+4096-byte chargen ROM image, `bloodfield-chargen.bin`, packaged in the jar
+at build time by `C64CharsetTool`. The telnet byte stream does not change;
+the same bytes simply wear finer clothes once the ROM is swapped in:
+
+- Emulator: point the chargen/character ROM at `bloodfield-chargen.bin`
+  (extract it from the jar), or
+- Real C64 / RAM charset: load the first 2048 bytes at `$3000`, then
+  `POKE 53272,28` (screen at `$0400`, charset at `$3000`) before starting
+  your terminal, if your terminal respects `$D018`.
+
+No Commodore ROM bytes are shipped; every bitmap is designed in
+`telnet/C64Charset.java`. The screenshots in `docs/screenshots/c64/` are
+rendered by the committed `C64CharsetTool` (Pepto palette), e.g.
+`13-custom-charset.png`:
+
+![The custom Bloodfield charset](docs/screenshots/c64/13-custom-charset.png)
 
 Add `--proxy=host:port` and the telnet server becomes a frontend for a remote
 2-player gRPC match instead of local play (see below).

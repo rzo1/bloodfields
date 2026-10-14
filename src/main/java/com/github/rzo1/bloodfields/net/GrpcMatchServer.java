@@ -7,7 +7,7 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 
 /**
  * Netty server hosting a single 2-player {@link Match} on the {@code Play}
- * bidirectional stream. Lifecycle lines go to stdout, like the CLI frontends.
+ * bidirectional stream. The CLI owns lifecycle output; this class stays silent.
  */
 public final class GrpcMatchServer implements AutoCloseable {
 
@@ -29,7 +29,6 @@ public final class GrpcMatchServer implements AutoCloseable {
                 .addService(new BloodfieldService(new Match()))
                 .build()
                 .start();
-        System.out.println("grpc match server listening on port " + port());
     }
 
     /** Actual bound port; with port 0 requested, the ephemeral port chosen. */
