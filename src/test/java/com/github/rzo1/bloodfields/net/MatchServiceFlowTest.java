@@ -243,7 +243,7 @@ class MatchServiceFlowTest {
         assertEquals("ann", savedRed.getSaved().getSavedBy());
         GameMessage savedBlue = await(both[1], GameMessage::hasSaved);
         assertEquals(Phase.ENDED, savedBlue.getSaved().getPhase());
-        assertFalse(savedBlue.getSaved().getSnapshot().isEmpty());
+        assertFalse(savedBlue.getSaved().getSaveRecord().isEmpty());
     }
 
     @Test
@@ -256,7 +256,7 @@ class MatchServiceFlowTest {
 
         both[1].send(PlayerMessage.newBuilder()
                 .setRestore(RestoreGame.newBuilder()
-                        .setSnapshot(saved.getSaved().getSnapshot())));
+                        .setSnapshot(saved.getSaved().getSaveRecord())));
         await(both[0], GameMessage::hasRestoreProposed);
         both[0].send(PlayerMessage.newBuilder().setConsentRestore(
                 com.github.rzo1.bloodfields.net.proto.ConsentRestore.newBuilder().setAccept(true)));
@@ -298,7 +298,7 @@ class MatchServiceFlowTest {
     }
 
     @Test
-    void saveAndRestoreRejectedInLobby() {
+    void saveRejectedInLobbyAndRestoreValidatesPayload() {
         GameClient red = client("ann");
         GameClient blue = client("bob");
         await(red, GameMessage::hasWelcome);
@@ -309,11 +309,12 @@ class MatchServiceFlowTest {
         GameMessage saveDenied = await(red, GameMessage::hasError);
         assertEquals("CANNOT SAVE IN LOBBY", saveDenied.getError().getReason());
 
+        // Restore is allowed in LOBBY now; a garbage payload is still rejected.
         red.send(PlayerMessage.newBuilder()
                 .setRestore(RestoreGame.newBuilder()
                         .setSnapshot(ByteString.copyFrom(new byte[]{1}))));
         GameMessage restoreDenied = await(red, GameMessage::hasError);
-        assertEquals("CANNOT RESTORE IN LOBBY", restoreDenied.getError().getReason());
+        assertEquals("INVALID SNAPSHOT", restoreDenied.getError().getReason());
     }
 
     @Test

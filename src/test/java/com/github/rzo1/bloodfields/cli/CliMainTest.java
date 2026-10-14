@@ -1,5 +1,7 @@
 package com.github.rzo1.bloodfields.cli;
 
+import com.github.rzo1.bloodfields.util.Json;
+
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;

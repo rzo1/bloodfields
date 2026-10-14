@@ -50,13 +50,24 @@ public final class SnapshotSigner {
         return MessageDigest.isEqual(mac(snap), snap.getSeal().toByteArray());
     }
 
-    private byte[] mac(Snapshot snap) {
+    /** HMAC-SHA256 over arbitrary bytes (save records, match records). */
+    public byte[] macBytes(byte[] data) {
         try {
             Mac hmac = Mac.getInstance("HmacSHA256");
             hmac.init(new SecretKeySpec(key, "HmacSHA256"));
-            return hmac.doFinal(snap.toBuilder().clearSeal().build().toByteArray());
+            return hmac.doFinal(data);
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("HmacSHA256 unavailable", e);
         }
+    }
+
+    /** Constant-time check of {@code expectedMac} against {@code data}. */
+    public boolean verifyBytes(byte[] data, byte[] expectedMac) {
+        return expectedMac != null && expectedMac.length > 0
+                && MessageDigest.isEqual(macBytes(data), expectedMac);
+    }
+
+    private byte[] mac(Snapshot snap) {
+        return macBytes(snap.toBuilder().clearSeal().build().toByteArray());
     }
 }

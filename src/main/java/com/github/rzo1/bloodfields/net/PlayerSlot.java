@@ -15,6 +15,8 @@ final class PlayerSlot {
     boolean ready;
     String name = "";
     String token = "";
+    String playerId = "";
+    int advertisedSaves;
     private long lastSaveNanos;
     private long lastRestoreNanos;
     MatchClient client;

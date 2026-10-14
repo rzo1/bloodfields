@@ -1,5 +1,9 @@
 package com.github.rzo1.bloodfields.telnet;
 
+import com.github.rzo1.bloodfields.net.DataDirs;
+import com.github.rzo1.bloodfields.net.ProfileStore;
+import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -38,6 +42,10 @@ public final class TelnetServer implements AutoCloseable {
     private final String proxyHost;
     private final boolean proxyTls;
     private final File proxyTrustCert;
+    private final String playerName;
+    private final java.nio.file.Path dataDir;
+    private final Set<String> sessionNames = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile PlayerProfile profile;
     private final int proxyPort;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private final AtomicInteger active = new AtomicInteger();
@@ -84,6 +92,31 @@ public final class TelnetServer implements AutoCloseable {
      */
     public TelnetServer(InetAddress bindAddress, int port, int maxSessions,
                         String proxyHost, int proxyPort, boolean proxyTls, File proxyTrustCert) {
+        this(bindAddress, port, maxSessions, proxyHost, proxyPort, proxyTls, proxyTrustCert,
+                null, null);
+    }
+
+    /** Proxy mode with a display-name override. */
+    public TelnetServer(int port, int maxSessions, String proxyHost, int proxyPort,
+                        String playerName) {
+        this(null, port, maxSessions, proxyHost, proxyPort, false, null, playerName, null);
+    }
+
+    /** Proxy mode with a display-name override and explicit data directory. */
+    public TelnetServer(int port, int maxSessions, String proxyHost, int proxyPort,
+                        String playerName, java.nio.file.Path dataDir) {
+        this(null, port, maxSessions, proxyHost, proxyPort, false, null, playerName, dataDir);
+    }
+
+    /**
+     * Full form with proxy identity.
+     *
+     * @param playerName display-name override for proxied sessions (memory only)
+     * @param dataDir    profile/saves/records directory; null = {@code ~/.bloodfield}
+     */
+    public TelnetServer(InetAddress bindAddress, int port, int maxSessions,
+                        String proxyHost, int proxyPort, boolean proxyTls, File proxyTrustCert,
+                        String playerName, java.nio.file.Path dataDir) {
         this.bindAddress = bindAddress;
         this.requestedPort = port;
         this.maxSessions = maxSessions;
@@ -91,6 +124,58 @@ public final class TelnetServer implements AutoCloseable {
         this.proxyPort = proxyPort;
         this.proxyTls = proxyTls;
         this.proxyTrustCert = proxyTrustCert;
+        this.playerName = playerName == null || playerName.isBlank() ? null : playerName.trim();
+        this.dataDir = dataDir == null ? DataDirs.defaultDir() : dataDir;
+    }
+
+    /** The shared node profile, loaded exactly once (serialized: no clobber race). */
+    public synchronized PlayerProfile profile() {
+        if (profile == null) {
+            PlayerProfile p = ProfileStore.loadOrCreate(dataDir);
+            if (playerName != null) {
+                p = p.toBuilder().setName(playerName).build();
+            }
+            profile = p;
+        }
+        return profile;
+    }
+
+    /** Data directory in use for proxied sessions' stores. */
+    java.nio.file.Path dataDir() {
+        return dataDir;
+    }
+
+    /**
+     * Claims a distinct session identity: the first concurrent session
+     * rides under the node's true name and id; simultaneous siblings get
+     * {@code NAME-2} with id {@code <id>#2}, so one telnet server hosting
+     * both seats can never put the same lord on both sides of a record.
+     */
+    synchronized PlayerProfile claimIdentity() {
+        PlayerProfile base = profile();
+        String claimed = claimName(base.getName());
+        if (claimed.equals(base.getName())) return base;
+        return base.toBuilder()
+                .setName(claimed)
+                .setPlayerId(base.getPlayerId() + claimed.substring(base.getName().length()).replace('-', '#'))
+                .build();
+    }
+
+    /** Claims the base name, or the lowest free {@code -2}, {@code -3}, ... suffix. */
+    synchronized String claimName(String base) {
+        if (sessionNames.add(base)) return base;
+        for (int i = 2; ; i++) {
+            String candidate = base + "-" + i;
+            if (sessionNames.add(candidate)) return candidate;
+        }
+    }
+
+    synchronized void releaseName(String name) {
+        sessionNames.remove(name);
+    }
+
+    synchronized void releaseIdentity(PlayerProfile sessionProfile) {
+        if (sessionProfile != null) sessionNames.remove(sessionProfile.getName());
     }
 
     /** The address this server binds (or will bind) to; loopback when unspecified. */
@@ -158,12 +243,19 @@ public final class TelnetServer implements AutoCloseable {
             active.incrementAndGet();
             clients.add(s);
             Thread t = new Thread(() -> {
+                PlayerProfile claimed = null;
                 try {
-                    Runnable session = proxyHost == null
-                            ? new TelnetSession(s)
-                            : new ProxySession(s, proxyHost, proxyPort, proxyTls, proxyTrustCert);
+                    Runnable session;
+                    if (proxyHost == null) {
+                        session = new TelnetSession(s);
+                    } else {
+                        claimed = claimIdentity();
+                        session = new ProxySession(s, proxyHost, proxyPort, proxyTls,
+                                proxyTrustCert, claimed, dataDir);
+                    }
                     session.run();
                 } finally {
+                    if (claimed != null) releaseIdentity(claimed);
                     clients.remove(s);
                     active.decrementAndGet();
                 }

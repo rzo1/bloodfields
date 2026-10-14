@@ -9,6 +9,8 @@ import com.github.rzo1.bloodfields.net.proto.BattleState;
 import com.github.rzo1.bloodfields.net.proto.CorpseInfo;
 import com.github.rzo1.bloodfields.net.proto.DeployState;
 import com.github.rzo1.bloodfields.net.proto.LobbyState;
+import com.github.rzo1.bloodfields.net.proto.Leaderboard;
+import com.github.rzo1.bloodfields.net.proto.LeaderboardEntry;
 import com.github.rzo1.bloodfields.net.proto.ProjectileInfo;
 import com.github.rzo1.bloodfields.net.proto.StructureInfo;
 import com.github.rzo1.bloodfields.net.proto.StructureKind;
@@ -515,5 +517,92 @@ class PetsciiProxyRendererTest {
         assertEquals(0, repaint.glyphWritesAt(39, 24), "full repaint still skips (39,24)");
         assertEquals(PetsciiScreen.COLS * PetsciiScreen.ROWS - 1, repaint.writes.size(),
                 "repaint refreshes every other cell");
+    }
+
+    // ----- leaderboard overlay -----
+
+    private static LeaderboardEntry entry(String id, String name, int games, int wins,
+                                          int losses, int draws) {
+        return LeaderboardEntry.newBuilder()
+                .setPlayerId(id)
+                .setName(name)
+                .setGames(games)
+                .setWins(wins)
+                .setLosses(losses)
+                .setDraws(draws)
+                .build();
+    }
+
+    private static String rowText(PetsciiScreen scr, int r) {
+        StringBuilder sb = new StringBuilder(COLS);
+        for (int c = 0; c < COLS; c++) {
+            sb.append((char) scr.glyphAt(c, r));
+        }
+        return sb.toString();
+    }
+
+    @Test
+    void leaderboardRendersHeaderEntriesTotalAndOwnHighlight() {
+        Leaderboard board = Leaderboard.newBuilder()
+                .addEntries(entry("p1", "RIDA", 4, 3, 1, 0))
+                .addEntries(entry("p2", "MOTO", 3, 2, 0, 1))
+                .addEntries(entry("p3", "ZX81", 2, 0, 2, 0))
+                .setTotalRecords(9)
+                .build();
+        PetsciiScreen scr = new PetsciiScreen();
+        PetsciiProxyRenderer.renderLeaderboard(scr, board, "p2");
+
+        assertEquals("*** BLOODFIELD LEADERBOARD ***",
+                rowText(scr, 0).trim());
+        assertEquals(Petscii.YELLOW, scr.colorAt(5, 0));
+        assertEquals("RANK NAME                 W   L   D  GMS", rowText(scr, 3));
+
+        String first = rowText(scr, 4);
+        assertEquals("   1", first.substring(0, 4), "rank right-aligned");
+        assertTrue(first.startsWith("RIDA", 5), "name at column 5");
+        assertEquals("3", first.substring(27, 28), "wins under W");
+        assertEquals("1", first.substring(31, 32), "losses under L");
+        assertEquals("0", first.substring(35, 36), "draws under D");
+        assertEquals("4", first.substring(39, 40), "games right-aligned at the edge");
+        assertEquals(Petscii.LIGHT_GREY, scr.colorAt(5, 4), "other row in light grey");
+
+        String own = rowText(scr, 5);
+        assertEquals("2", own.substring(3, 4));
+        assertTrue(own.startsWith("MOTO", 5));
+        assertEquals(Petscii.LIGHT_GREEN, scr.colorAt(5, 5), "own row highlighted");
+        assertEquals(Petscii.LIGHT_GREY, scr.colorAt(5, 6), "third row light grey");
+
+        assertTrue(rowText(scr, 21).trim().startsWith("TOTAL GAMES ON MESH: 9"));
+        assertEquals("PRESS ANY KEY TO RETURN", rowText(scr, 24).trim());
+    }
+
+    @Test
+    void leaderboardCapsAtTwelveEntries() {
+        Leaderboard.Builder b = Leaderboard.newBuilder().setTotalRecords(15);
+        for (int i = 1; i <= 15; i++) {
+            b.addEntries(entry("p" + i, "P" + i, 1, 1, 0, 0));
+        }
+        PetsciiScreen scr = new PetsciiScreen();
+        PetsciiProxyRenderer.renderLeaderboard(scr, b.build(), "");
+        assertTrue(rowText(scr, 15).startsWith("  12"), "twelfth entry on row 15");
+        assertEquals(" ", rowText(scr, 16).substring(3, 4), "thirteenth entry not rendered");
+        assertTrue(rowText(scr, 21).trim().startsWith("TOTAL GAMES ON MESH: 15"));
+    }
+
+    @Test
+    void leaderboardEmptyBoardShowsNoGamesVariant() {
+        PetsciiScreen scr = new PetsciiScreen();
+        PetsciiProxyRenderer.renderLeaderboard(scr, Leaderboard.getDefaultInstance(), "");
+        assertEquals("(NO GAMES RECORDED YET)", rowText(scr, 12).trim());
+        assertTrue(rowText(scr, 21).trim().startsWith("TOTAL GAMES ON MESH: 0"));
+        assertEquals("PRESS ANY KEY TO RETURN", rowText(scr, 24).trim());
+    }
+
+    @Test
+    void leaderboardLoadingVariantWhileBoardIsInFlight() {
+        PetsciiScreen scr = new PetsciiScreen();
+        PetsciiProxyRenderer.renderLeaderboard(scr, null, "p1");
+        assertEquals("LOADING...", rowText(scr, 12).trim());
+        assertEquals("PRESS ANY KEY TO RETURN", rowText(scr, 24).trim());
     }
 }

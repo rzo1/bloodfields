@@ -3,8 +3,14 @@ package com.github.rzo1.bloodfields.net;
 import com.github.rzo1.bloodfields.model.Faction;
 import com.github.rzo1.bloodfields.net.proto.BloodfieldGrpc;
 import com.github.rzo1.bloodfields.net.proto.GameMessage;
+import com.github.rzo1.bloodfields.net.proto.FetchSave;
 import com.github.rzo1.bloodfields.net.proto.Join;
 import com.github.rzo1.bloodfields.net.proto.PlayerMessage;
+import com.github.rzo1.bloodfields.net.proto.PlayerProfile;
+import com.github.rzo1.bloodfields.net.proto.RequestLeaderboard;
+import com.github.rzo1.bloodfields.net.proto.RestoreGame;
+import com.github.rzo1.bloodfields.net.proto.SaveGame;
+import com.github.rzo1.bloodfields.net.proto.SaveMeta;
 
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -33,11 +39,39 @@ public final class GameClient implements AutoCloseable {
     /** Connects reclaiming a seat by token, or into the spectator gallery. */
     public static GameClient connect(String host, int port, String name,
                                      String reconnectToken, boolean spectate) {
-        ManagedChannel channel = NettyChannelBuilder.forAddress(host, port)
-                .usePlaintext()
-                .maxInboundMessageSize(GrpcMatchServer.MAX_INBOUND_MESSAGE_BYTES)
+        return connect(host, port, profile(name, ""), reconnectToken, spectate, null, false, null);
+    }
+
+    /** Connects with a stable profile identity and the saves advertised at the handshake. */
+    public static GameClient connect(String host, int port, PlayerProfile profile,
+                                     java.util.List<SaveMeta> saves) {
+        return connect(host, port, profile, "", false, saves, false, null);
+    }
+
+    /** Full form: profile identity, reconnect/spectate, advertised saves, TLS. */
+    public static GameClient connect(String host, int port, PlayerProfile profile,
+                                     String reconnectToken, boolean spectate,
+                                     java.util.List<SaveMeta> saves,
+                                     boolean tls, java.io.File trustCert) {
+        NettyChannelBuilder builder = NettyChannelBuilder.forAddress(host, port)
+                .maxInboundMessageSize(GrpcMatchServer.MAX_INBOUND_MESSAGE_BYTES);
+        try {
+            if (tls) {
+                builder.sslContext(Tls.clientContext(trustCert));
+            } else {
+                builder.usePlaintext();
+            }
+        } catch (javax.net.ssl.SSLException e) {
+            throw new IllegalArgumentException("TLS setup failed: " + e.getMessage(), e);
+        }
+        return new GameClient(builder.build(), profile, reconnectToken, spectate, saves);
+    }
+
+    private static PlayerProfile profile(String name, String playerId) {
+        return PlayerProfile.newBuilder()
+                .setPlayerId(playerId == null ? "" : playerId)
+                .setName(name == null ? "" : name)
                 .build();
-        return new GameClient(channel, name, reconnectToken, spectate);
     }
 
     /**
@@ -47,15 +81,7 @@ public final class GameClient implements AutoCloseable {
     public static GameClient connectTls(String host, int port, String name,
                                         String reconnectToken, boolean spectate,
                                         java.io.File trustCert) {
-        try {
-            ManagedChannel channel = NettyChannelBuilder.forAddress(host, port)
-                    .sslContext(Tls.clientContext(trustCert))
-                    .maxInboundMessageSize(GrpcMatchServer.MAX_INBOUND_MESSAGE_BYTES)
-                    .build();
-            return new GameClient(channel, name, reconnectToken, spectate);
-        } catch (javax.net.ssl.SSLException e) {
-            throw new IllegalArgumentException("TLS setup failed: " + e.getMessage(), e);
-        }
+        return connect(host, port, profile(name, ""), reconnectToken, spectate, null, true, trustCert);
     }
 
     private final ManagedChannel channel;
@@ -67,12 +93,26 @@ public final class GameClient implements AutoCloseable {
     private volatile boolean spectator;
     private volatile boolean streamOpen = true;
     private volatile String closeReason;
+    private volatile String matchId = "";
+    private volatile java.util.List<SaveMeta> serverSaves = java.util.List.of();
+    private volatile SaveStore saveStore;
+    private volatile LeaderboardStore leaderboardStore;
 
     GameClient(ManagedChannel channel, String name) {
-        this(channel, name, "", false);
+        this(channel, profile(name, ""), "", false, null);
+    }
+
+    GameClient(ManagedChannel channel, PlayerProfile profile,
+               java.util.List<SaveMeta> saves) {
+        this(channel, profile, "", false, saves);
     }
 
     GameClient(ManagedChannel channel, String name, String reconnectToken, boolean spectate) {
+        this(channel, profile(name, ""), reconnectToken, spectate, null);
+    }
+
+    GameClient(ManagedChannel channel, PlayerProfile profile,
+               String reconnectToken, boolean spectate, java.util.List<SaveMeta> saves) {
         this.channel = channel;
         BloodfieldGrpc.BloodfieldStub stub = BloodfieldGrpc.newStub(channel);
         this.out = stub.play(new StreamObserver<GameMessage>() {
@@ -82,7 +122,10 @@ public final class GameClient implements AutoCloseable {
                     GameClient.this.faction = ProtoMapper.faction(msg.getWelcome().getYourFaction());
                     GameClient.this.reconnectToken = msg.getWelcome().getReconnectToken();
                     GameClient.this.spectator = msg.getWelcome().getSpectator();
+                    GameClient.this.matchId = msg.getWelcome().getMatchId();
+                    GameClient.this.serverSaves = msg.getWelcome().getSavesList();
                 }
+                persist(msg);
                 offer(msg);
             }
 
@@ -97,12 +140,78 @@ public final class GameClient implements AutoCloseable {
                 streamOpen = false;
             }
         });
-        out.onNext(PlayerMessage.newBuilder()
-                .setJoin(Join.newBuilder()
-                        .setPlayerName(name == null ? "" : name)
+        Join.Builder join = Join.newBuilder()
+                        .setPlayerName(profile.getName())
+                        .setProfile(profile)
                         .setReconnectToken(reconnectToken == null ? "" : reconnectToken)
-                        .setSpectate(spectate))
-                .build());
+                        .setSpectate(spectate);
+                if (saves != null) join.addAllSaves(saves);
+                out.onNext(PlayerMessage.newBuilder().setJoin(join).build());
+    }
+
+    /**
+     * Keeps durable local copies under {@code dataDir}: every save the server
+     * broadcasts joins the local {@link SaveStore} (never overwriting a save
+     * already held — a remote id collision cannot clobber local scrolls) and
+     * every finished match record joins the local {@link LeaderboardStore}.
+     * Failures are swallowed so the stream never breaks over disk trouble.
+     */
+    public void enableLocalStores(java.nio.file.Path dataDir) {
+        this.saveStore = SaveStore.at(dataDir);
+        this.leaderboardStore = LeaderboardStore.at(dataDir);
+    }
+
+    private void persist(GameMessage msg) {
+        try {
+            if (saveStore != null && msg.hasSaved()) {
+                byte[] bytes = !msg.getSaved().getSaveRecord().isEmpty()
+                        ? msg.getSaved().getSaveRecord().toByteArray()
+                        : msg.getSaved().getSnapshot().toByteArray();
+                if (bytes.length > 0 && SaveCodec.hasMagic(bytes)) {
+                    saveStore.putIfAbsent(bytes);
+                }
+            }
+            if (leaderboardStore != null && msg.hasRecord()) {
+                leaderboardStore.add(msg.getRecord());
+            }
+        } catch (RuntimeException ex) {
+            // local stores are best-effort; never break the inbound stream
+        }
+    }
+
+    /** Asks the server to snapshot the match; the sealed SaveRecord returns on SaveEvent. */
+    public void save(String label) {
+        send(PlayerMessage.newBuilder()
+                .setSave(SaveGame.newBuilder().setLabel(label == null ? "" : label)));
+    }
+
+    /** Proposes restoring previously received save bytes (a parley: the foe must consent). */
+    public void restore(byte[] bytes) {
+        send(PlayerMessage.newBuilder()
+                .setRestore(RestoreGame.newBuilder()
+                        .setSnapshot(com.google.protobuf.ByteString.copyFrom(bytes))));
+    }
+
+    /** Asks the server to broadcast one of its stored saves to both players. */
+    public void fetchSave(String saveId) {
+        send(PlayerMessage.newBuilder()
+                .setFetchSave(FetchSave.newBuilder().setSaveId(saveId)));
+    }
+
+    /** Asks for the server's aggregated leaderboard; the reply arrives as a board message. */
+    public void requestLeaderboard() {
+        send(PlayerMessage.newBuilder()
+                .setLeaderboard(RequestLeaderboard.getDefaultInstance()));
+    }
+
+    /** Server-assigned match id from the welcome (empty until welcomed). */
+    public String matchId() {
+        return matchId;
+    }
+
+    /** Saves the server advertised at the handshake (empty until welcomed). */
+    public java.util.List<SaveMeta> serverSaves() {
+        return serverSaves;
     }
 
     private void offer(GameMessage msg) {

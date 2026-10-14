@@ -1,5 +1,6 @@
 package com.github.rzo1.bloodfields.telnet;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -98,6 +99,20 @@ class TelnetServerTest {
                 assertEof(first);
             }
         }
+    }
+
+    @Test
+    void proxySessionNamesAreSuffixedWhileActive() {
+        TelnetServer server = new TelnetServer(0, 2, "127.0.0.1", 1, "RICK");
+        assertEquals("RICK", server.claimName("RICK"));
+        assertEquals("RICK-2", server.claimName("RICK"));
+        assertEquals("RICK-3", server.claimName("RICK"));
+        server.releaseName("RICK-2");
+        assertEquals("RICK-2", server.claimName("RICK"), "released suffix is reused");
+        server.releaseName("RICK");
+        server.releaseName("RICK-2");
+        server.releaseName("RICK-3");
+        assertEquals("RICK", server.claimName("RICK"));
     }
 
     private static Socket connect(TelnetServer server) throws IOException {

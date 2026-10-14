@@ -78,8 +78,10 @@ message PlayerMessage {
     SaveGame save = 8;           // any phase except lobby
     RestoreGame restore = 9;     // proposes restoring a snapshot (parley)
     ConsentRestore consent_restore = 10;  // answer to a RestoreProposedEvent
+    FetchSave fetch_save = 11;   // ask the server to broadcast one of its stored saves
+    RequestLeaderboard leaderboard = 12;  // ask for the server's aggregated leaderboard
   }
-  reserved 11 to 20;
+  reserved 13 to 20;
 }
 
 message Join {
@@ -90,7 +92,9 @@ message Join {
   // Join the gallery instead of a seat: spectators receive every frame
   // and event but their commands are rejected.
   bool spectate = 3;
-  reserved 4 to 10;
+  PlayerProfile profile = 4;     // stable identity from the player's local store
+  repeated SaveMeta saves = 5;   // count advertised at handshake (server uses the count)
+  reserved 6 to 10;
 }
 
 message Configure {
@@ -158,8 +162,10 @@ message GameMessage {
     ErrorEvent error = 8;          // rejected action (stream stays open)
     RestoreProposedEvent restore_proposed = 9;  // opponent asks to restore
     NoticeEvent notice = 10;       // herald's cry: notable battle events
+    MatchRecord record = 11;       // final record of the match, sent once at ENDED
+    Leaderboard board = 12;        // response to RequestLeaderboard
   }
-  reserved 11 to 20;
+  reserved 13 to 20;
 }
 
 message Welcome {
@@ -169,7 +175,9 @@ message Welcome {
   // Present this token on a later Join to reclaim this seat after a drop.
   string reconnect_token = 4;
   bool spectator = 5;
-  reserved 6 to 10;
+  repeated SaveMeta saves = 6;   // server's stored saves (newest first, capped)
+  string match_id = 7;           // server-assigned id, echoed in the MatchRecord
+  reserved 8 to 10;
 }
 
 message PlayerInfo {
@@ -177,6 +185,8 @@ message PlayerInfo {
   string name = 2;
   bool connected = 3;
   bool ready = 4;
+  string player_id = 5;          // stable id from the player's profile, if shared
+  int32 save_count = 6;          // number of saves this player advertised
 }
 
 message StructureInfo {
@@ -282,11 +292,16 @@ message ResultEvent {
 }
 
 message SaveEvent {
-  bytes snapshot = 1;            // serialized Snapshot; persist anywhere
+  // Serialized raw Snapshot. DEPRECATED since saves became records: new
+  // servers leave this empty and use save_record; the field number and
+  // meaning are kept frozen so mixed versions fail loudly, not silently.
+  bytes snapshot = 1 [deprecated = true];
   string saved_by = 2;
   string label = 3;
   Phase phase = 4;
   double sim_time = 5;
+  string save_id = 6;
+  bytes save_record = 7;         // gzip-compressed, sealed SaveRecord (SaveCodec)
 }
 
 message RestoredEvent {
@@ -416,4 +431,114 @@ message StructureState {
   bool destroyed = 7;
   bool open = 8;
   double hp = 9;
+}
+
+// ---------------------------------------------------------------- profiles & saves
+
+message PlayerProfile {
+  string player_id = 1;   // stable random id from the player's local profile store
+  string name = 2;        // display name
+}
+
+message SaveMeta {
+  string save_id = 1;
+  string label = 2;
+  int64 created_epoch_ms = 3;
+  string saved_by = 4;
+  string map_id = 5;
+  int32 budget = 6;
+  Phase phase = 7;
+  int64 tick = 8;
+  int32 size_bytes = 9;   // compressed size on disk
+}
+
+// A save state is a base snapshot plus the queue of player actions applied
+// since, with the current head snapshot for instant restore. The queue is
+// an audit trail: SaveCodec.replayHolds re-applies it to the base and
+// checks it reproduces the head's deployment, so a save can prove its own
+// history instead of merely asserting it. Persisted gzip-compressed and
+// sealed whole (field 9) by the issuing server.
+message SaveRecord {
+  int32 version = 1;                  // record format version, currently 1
+  string save_id = 2;
+  int64 created_epoch_ms = 3;
+  string label = 4;
+  string saved_by = 5;
+  Snapshot base = 6;                  // checkpoint the action queue builds on
+  repeated JournalAction actions = 7; // journaled actions since base (bounded)
+  Snapshot head = 8;                  // current state; restore uses this
+  bytes seal = 9;                     // HMAC over the record with this cleared
+  reserved 10 to 15;
+}
+
+// One journaled action with the faction that issued it — a raw
+// PlayerMessage loses its author, and an audit that must guess
+// authorship from map halves is no audit at all.
+message JournalAction {
+  Faction faction = 1;
+  PlayerMessage message = 2;
+}
+
+message FetchSave {
+  string save_id = 1;
+}
+
+message RequestLeaderboard {
+}
+
+// ---------------------------------------------------------------- match records
+
+message MatchRecord {
+  string match_id = 1;
+  int64 ended_epoch_ms = 2;
+  PlayerProfile red = 3;
+  PlayerProfile blue = 4;
+  string winner_id = 5;    // player_id, empty on draw; must be red or blue
+  bool draw = 6;
+  bool resigned = 7;
+  int64 ticks = 8;
+  double sim_time = 9;
+  int32 red_left = 10;
+  int32 blue_left = 11;
+  string map_id = 12;
+  // HMAC of the hosting server under the mesh realm's shared secret (the
+  // Concordat). Empty only inside realms that explicitly run open.
+  bytes signature = 13;
+  string issuer_id = 14;   // node/profile id of the issuing server
+  reserved 15 to 20;
+}
+
+message LeaderboardEntry {
+  string player_id = 1;
+  string name = 2;         // most recent display name seen for this id
+  int32 games = 3;
+  int32 wins = 4;
+  int32 losses = 5;
+  int32 draws = 6;
+}
+
+message Leaderboard {
+  repeated LeaderboardEntry entries = 1;  // sorted: wins desc, then games desc, then name
+  int32 total_records = 2;                // records aggregated over
+}
+
+// Mesh gossip (the Concordat of Realms): two servers join leaderboards the
+// way kingdoms join by marriage — heralds exchange what each court knows,
+// the chronicles merge by union, and both realms emerge one. Enterprise
+// translation available in the README.
+service BloodfieldMesh {
+  rpc Sync(stream MeshMessage) returns (stream MeshMessage);
+}
+
+message MeshMessage {
+  oneof msg {
+    MeshHello hello = 1;      // REQUIRED first: profile + known record ids
+    MatchRecord record = 2;   // a record the peer announced it is missing
+    Leaderboard board = 3;    // final message: aggregate over the merged store
+  }
+}
+
+message MeshHello {
+  PlayerProfile profile = 1;
+  repeated string record_ids = 2;
 }

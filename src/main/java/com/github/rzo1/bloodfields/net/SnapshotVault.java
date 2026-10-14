@@ -26,8 +26,24 @@ final class SnapshotVault {
     /** Captures and seals the current game; returns wire bytes (size-checked by caller). */
     byte[] captureSealed(HeadlessGame game, MatchConfig config, Phase phase,
                          List<String> playerNames, Faction decidedWinner) {
-        return signer.seal(SnapshotCodec.capture(game, config, phase, playerNames, decidedWinner))
-                .toByteArray();
+        return captureSnapshot(game, config, phase, playerNames, decidedWinner).toByteArray();
+    }
+
+    /** Captures and seals the current game as a snapshot. */
+    Snapshot captureSnapshot(HeadlessGame game, MatchConfig config, Phase phase,
+                             List<String> playerNames, Faction decidedWinner) {
+        return signer.seal(SnapshotCodec.capture(game, config, phase, playerNames, decidedWinner));
+    }
+
+    /** Seals a whole SaveRecord for the wire/store. */
+    com.github.rzo1.bloodfields.net.proto.SaveRecord sealRecord(
+            com.github.rzo1.bloodfields.net.proto.SaveRecord record) {
+        return SaveCodec.seal(signer, record);
+    }
+
+    /** Verifies a SaveRecord's whole-record seal. */
+    boolean verifyRecord(com.github.rzo1.bloodfields.net.proto.SaveRecord record) {
+        return SaveCodec.verifySeal(signer, record);
     }
 
     /**

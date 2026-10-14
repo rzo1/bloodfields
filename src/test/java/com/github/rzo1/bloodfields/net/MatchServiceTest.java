@@ -315,7 +315,7 @@ class MatchServiceTest {
         await(blue, m -> m.hasSaved());
 
         red.send(PlayerMessage.newBuilder()
-                .setRestore(RestoreGame.newBuilder().setSnapshot(saved.getSaved().getSnapshot())));
+                .setRestore(RestoreGame.newBuilder().setSnapshot(saved.getSaved().getSaveRecord())));
         await(blue, m -> m.hasRestoreProposed());
         blue.send(PlayerMessage.newBuilder().setConsentRestore(
                 com.github.rzo1.bloodfields.net.proto.ConsentRestore.newBuilder().setAccept(true)));
@@ -343,7 +343,7 @@ class MatchServiceTest {
         assertEquals(Phase.DEPLOY, saved.getSaved().getPhase());
 
         red.send(PlayerMessage.newBuilder()
-                .setRestore(RestoreGame.newBuilder().setSnapshot(saved.getSaved().getSnapshot())));
+                .setRestore(RestoreGame.newBuilder().setSnapshot(saved.getSaved().getSaveRecord())));
         GameClient blue = both[1];
         await(blue, m -> m.hasRestoreProposed());
         blue.send(PlayerMessage.newBuilder().setConsentRestore(

@@ -66,6 +66,8 @@ public final class ProxySession implements Runnable {
     private final String proxyHost;
     private final boolean proxyTls;
     private final java.io.File proxyTrustCert;
+    private final com.github.rzo1.bloodfields.net.proto.PlayerProfile profile;
+    private final java.nio.file.Path dataDir;
     private final int proxyPort;
     private final PetsciiScreen screen = new PetsciiScreen();
     private final IacFilter iac = new IacFilter();
@@ -76,6 +78,9 @@ public final class ProxySession implements Runnable {
     private final AtomicReference<BattleState> battleRef = new AtomicReference<>();
     private final AtomicReference<ResultEvent> resultRef = new AtomicReference<>();
     private final AtomicReference<byte[]> saveRef = new AtomicReference<>();
+    private final AtomicReference<com.github.rzo1.bloodfields.net.proto.Leaderboard> boardRef =
+            new AtomicReference<>();
+    private volatile boolean showLeaderboard;
     private final java.util.concurrent.atomic.AtomicBoolean parleyPending =
             new java.util.concurrent.atomic.AtomicBoolean();
     private final ConcurrentLinkedQueue<String> flashQueue = new ConcurrentLinkedQueue<>();
@@ -95,15 +100,30 @@ public final class ProxySession implements Runnable {
     private volatile boolean spectating;
 
     public ProxySession(Socket socket, String proxyHost, int proxyPort) {
-        this(socket, proxyHost, proxyPort, false, null);
+        this(socket, proxyHost, proxyPort, false, null, null, null);
     }
 
     public ProxySession(Socket socket, String proxyHost, int proxyPort,
                         boolean proxyTls, java.io.File proxyTrustCert) {
+        this(socket, proxyHost, proxyPort, proxyTls, proxyTrustCert, null, null);
+    }
+
+    /**
+     * @param profile this session's claimed identity; {@code null} falls back
+     *                to a synthetic per-session profile
+     * @param dataDir when non-null, the session advertises its local saves at
+     *                the handshake and persists broadcasts locally
+     */
+    public ProxySession(Socket socket, String proxyHost, int proxyPort,
+                        boolean proxyTls, java.io.File proxyTrustCert,
+                        com.github.rzo1.bloodfields.net.proto.PlayerProfile profile,
+                        java.nio.file.Path dataDir) {
         this.socket = socket;
         this.proxyHost = proxyHost;
         this.proxyTls = proxyTls;
         this.proxyTrustCert = proxyTrustCert;
+        this.profile = profile;
+        this.dataDir = dataDir;
         this.proxyPort = proxyPort;
     }
 
@@ -167,9 +187,24 @@ public final class ProxySession implements Runnable {
         showLinking();
         GameClient c;
         try {
-            c = proxyTls
-                    ? GameClient.connectTls(proxyHost, proxyPort, playerName(), "", false, proxyTrustCert)
-                    : GameClient.connect(proxyHost, proxyPort, playerName());
+            com.github.rzo1.bloodfields.net.proto.PlayerProfile joinAs = profile != null
+                    ? profile
+                    : com.github.rzo1.bloodfields.net.proto.PlayerProfile.newBuilder()
+                            .setPlayerId(java.util.UUID.randomUUID().toString())
+                            .setName(playerName()).build();
+            java.util.List<com.github.rzo1.bloodfields.net.proto.SaveMeta> advertised = java.util.List.of();
+            if (dataDir != null) {
+                try {
+                    advertised = com.github.rzo1.bloodfields.net.SaveStore.at(dataDir).list(20);
+                } catch (RuntimeException ignored) {
+                    advertised = java.util.List.of();
+                }
+            }
+            c = GameClient.connect(proxyHost, proxyPort, joinAs, "", false,
+                    advertised, proxyTls, proxyTrustCert);
+            if (dataDir != null) {
+                c.enableLocalStores(dataDir);
+            }
         } catch (RuntimeException ex) {
             c = null;
         }
@@ -230,9 +265,14 @@ public final class ProxySession implements Runnable {
         matchFull = false;
         GameClient c;
         try {
-            c = proxyTls
-                    ? GameClient.connectTls(proxyHost, proxyPort, playerName(), "", true, proxyTrustCert)
-                    : GameClient.connect(proxyHost, proxyPort, playerName(), "", true);
+            com.github.rzo1.bloodfields.net.proto.PlayerProfile watchAs = profile != null
+                    ? profile
+                    : com.github.rzo1.bloodfields.net.proto.PlayerProfile.newBuilder()
+                            .setName(playerName()).build();
+            c = GameClient.connect(proxyHost, proxyPort, watchAs, "", true, null, proxyTls, proxyTrustCert);
+            if (dataDir != null) {
+                c.enableLocalStores(dataDir);
+            }
         } catch (RuntimeException ex) {
             c = null;
         }
@@ -332,8 +372,11 @@ public final class ProxySession implements Runnable {
                     resultRef.set(msg.getResult());
                     phaseRef.set(Phase.ENDED);
                 }
+                case BOARD -> boardRef.set(msg.getBoard());
                 case SAVED -> {
-                    saveRef.set(msg.getSaved().getSnapshot().toByteArray());
+                    saveRef.set(!msg.getSaved().getSaveRecord().isEmpty()
+                            ? msg.getSaved().getSaveRecord().toByteArray()
+                            : msg.getSaved().getSnapshot().toByteArray());
                     flashQueue.add("GAME SAVED");
                 }
                 case RESTORED -> {
@@ -360,6 +403,33 @@ public final class ProxySession implements Runnable {
         }
     }
 
+    // ----- leaderboard overlay -----
+
+    private boolean handleLeaderboard(int k) throws IOException {
+        if (showLeaderboard) {
+            if (k >= 0) {
+                showLeaderboard = false;
+                screen.invalidate();
+            } else {
+                renderLeaderboard();
+            }
+            return true;
+        }
+        if (k == 'L') {
+            showLeaderboard = true;
+            if (client != null) client.requestLeaderboard();
+            renderLeaderboard();
+            return true;
+        }
+        return false;
+    }
+
+    private void renderLeaderboard() throws IOException {
+        String ownId = profile == null ? "" : profile.getPlayerId();
+        PetsciiProxyRenderer.renderLeaderboard(screen, boardRef.get(), ownId);
+        present();
+    }
+
     // ----- lobby -----
 
     private Outcome lobbyScreen() throws IOException {
@@ -375,6 +445,9 @@ public final class ProxySession implements Runnable {
                 return Outcome.DEAD;
             }
             int k = timedKey();
+            if (handleLeaderboard(k)) {
+                continue;
+            }
             LobbyState lb = lobbyRef.get();
             if (k == 'Q') {
                 return Outcome.QUIT;
@@ -416,6 +489,9 @@ public final class ProxySession implements Runnable {
             PetsciiProxyRenderer.renderLobbyBoard(screen, lb);
         }
         screen.center(0, "WAR COUNCIL", Petscii.LIGHT_RED);
+        int serverSaves = client == null ? 0 : client.serverSaves().size();
+        screen.center(22, "SERVER SAVES: " + serverSaves
+                + (serverSaves > 0 ? "  F: FETCH LATEST SAVE" : ""), Petscii.LIGHT_GREY);
         for (int c = 0; c < PetsciiScreen.COLS; c++) {
             screen.set(c, 23, (byte) ' ', Petscii.GREY);
             screen.set(c, 24, (byte) ' ', Petscii.GREY);
@@ -427,7 +503,7 @@ public final class ProxySession implements Runnable {
         } else if (flashShowing()) {
             line = currentFlash();
         } else if (pageB) {
-            line = mine == Faction.RED ? "M:MAP B:BUD D:DRG R:RDY Q:OUT" : "R:RDY Q:OUT";
+            line = mine == Faction.RED ? "M:MAP B:BUD D:DRG R:RDY L:BRD Q:OUT" : "R:RDY L:BRD Q:OUT";
         } else {
             String map = lb.getMapName() == null || lb.getMapName().isEmpty()
                     ? lb.getMapId() : lb.getMapName();

@@ -1,4 +1,4 @@
-package com.github.rzo1.bloodfields.cli;
+package com.github.rzo1.bloodfields.util;
 
 import org.junit.jupiter.api.Test;
 

@@ -6,6 +6,8 @@ import com.github.rzo1.bloodfields.net.ProtoMapper;
 import com.github.rzo1.bloodfields.net.proto.BattleState;
 import com.github.rzo1.bloodfields.net.proto.CorpseInfo;
 import com.github.rzo1.bloodfields.net.proto.DeployState;
+import com.github.rzo1.bloodfields.net.proto.Leaderboard;
+import com.github.rzo1.bloodfields.net.proto.LeaderboardEntry;
 import com.github.rzo1.bloodfields.net.proto.LobbyState;
 import com.github.rzo1.bloodfields.net.proto.ProjectileInfo;
 import com.github.rzo1.bloodfields.net.proto.StructureInfo;
@@ -44,6 +46,56 @@ public final class PetsciiProxyRenderer {
         int centre = (int) Math.round(sum / n);
         int off = centre - ROWS / 2;
         return Math.max(0, Math.min(PetsciiRenderer.maxOffset(), off));
+    }
+
+    /**
+     * Full-screen leaderboard overlay. {@code board} {@code null} means the
+     * request is still in flight; an empty board shows the no-games variant.
+     * The row whose player id matches {@code ownPlayerId} is highlighted.
+     */
+    public static void renderLeaderboard(PetsciiScreen scr, Leaderboard board, String ownPlayerId) {
+        scr.clear((byte) ' ', Petscii.WHITE);
+        scr.center(0, "*** BLOODFIELD LEADERBOARD ***", Petscii.YELLOW);
+        if (board == null) {
+            scr.center(12, "LOADING...", Petscii.WHITE);
+        } else if (board.getEntriesCount() == 0) {
+            scr.center(12, "(NO GAMES RECORDED YET)", Petscii.LIGHT_GREY);
+            scr.center(21, "TOTAL GAMES ON MESH: 0", Petscii.GREY);
+        } else {
+            scr.text(0, 3, "RANK NAME                 W   L   D  GMS", Petscii.LIGHT_GREY);
+            int row = 4;
+            int rank = 1;
+            for (LeaderboardEntry e : board.getEntriesList()) {
+                if (row > 15) break;
+                boolean mine = ownPlayerId != null && !ownPlayerId.isEmpty()
+                        && ownPlayerId.equals(e.getPlayerId());
+                scr.text(0, row, boardRow(rank, e), mine ? Petscii.LIGHT_GREEN : Petscii.LIGHT_GREY);
+                row++;
+                rank++;
+            }
+            scr.center(21, "TOTAL GAMES ON MESH: " + board.getTotalRecords(), Petscii.GREY);
+        }
+        scr.center(24, "PRESS ANY KEY TO RETURN", Petscii.WHITE);
+    }
+
+    private static String boardRow(int rank, LeaderboardEntry e) {
+        char[] line = new char[COLS];
+        java.util.Arrays.fill(line, ' ');
+        putRight(line, 3, Integer.toString(rank));
+        String name = e.getName();
+        if (name.length() > 20) name = name.substring(0, 20);
+        name.getChars(0, name.length(), line, 5);
+        putRight(line, 27, Integer.toString(e.getWins()));
+        putRight(line, 31, Integer.toString(e.getLosses()));
+        putRight(line, 35, Integer.toString(e.getDraws()));
+        putRight(line, 39, Integer.toString(e.getGames()));
+        return new String(line);
+    }
+
+    private static void putRight(char[] line, int end, String num) {
+        int start = end - num.length() + 1;
+        if (start < 0) start = 0;
+        num.getChars(0, Math.min(num.length(), end + 1), line, start);
     }
 
     public static void renderLobbyBoard(PetsciiScreen scr, LobbyState lobby) {

@@ -120,19 +120,23 @@ class MatchHardeningTest {
         saver.send(PlayerMessage.newBuilder().setSave(SaveGame.newBuilder().setLabel("s")));
         GameMessage saved = await(saver, GameMessage::hasSaved);
         await(other, GameMessage::hasSaved);
-        return saved.getSaved().getSnapshot();
+        return saved.getSaved().getSaveRecord();
     }
 
     @Test
     void forgedSnapshotIsRejectedByTheSeal() throws Exception {
         GameClient[] both = intoBattle();
         ByteString sealed = save(both[0], both[1]);
-        Snapshot forged = Snapshot.parseFrom(sealed).toBuilder()
-                .setDragons(true)
-                .setBudget(MatchConfig.MAX_BUDGET)
-                .build();
+        // Saves are sealed SaveRecords now: tamper with one and re-encode.
+        com.github.rzo1.bloodfields.net.proto.SaveRecord rec =
+                SaveCodec.decode(sealed.toByteArray());
+        byte[] forged = SaveCodec.encode(rec.toBuilder()
+                .setHead(rec.getHead().toBuilder()
+                        .setDragons(true)
+                        .setBudget(MatchConfig.MAX_BUDGET))
+                .build());
         both[1].send(PlayerMessage.newBuilder().setRestore(
-                RestoreGame.newBuilder().setSnapshot(forged.toByteString())));
+                RestoreGame.newBuilder().setSnapshot(ByteString.copyFrom(forged))));
         GameMessage err = await(both[1], GameMessage::hasError);
         assertTrue(err.getError().getReason().contains("SEAL"), err.getError().getReason());
     }
